@@ -19,6 +19,8 @@ create index if not exists messages_icao_idx on messages (icao);
 
 create index if not exists messages_session_idx on messages (session);
 
+create index if not exists messages_captured_at_idx on messages (captured_at);
+
 -- Per-message fields decoded with pyModeS (nullable — each message type
 -- carries only some of them). Added via ALTER so existing DBs migrate.
 alter table messages add column if not exists hex           text;
