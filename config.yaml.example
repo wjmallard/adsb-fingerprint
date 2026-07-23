@@ -6,6 +6,8 @@ database:
 paths:
   # Raw IQ captures — the source of truth. ~ is expanded.
   captures: ~/radio-classifier-data/captures
+  # Model checkpoints — one directory per adsb-train run.
+  models: ~/radio-classifier-data/models
 
 radio:
   center_freq_hz: 1090000000   # ADS-B / Mode S downlink

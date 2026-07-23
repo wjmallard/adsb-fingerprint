@@ -20,6 +20,7 @@ _config = yaml.safe_load(_config_path.read_text())
 DBNAME = _config["database"]["dbname"]
 
 CAPTURE_DIR = Path(_config["paths"]["captures"]).expanduser()
+MODEL_DIR = Path(_config["paths"]["models"]).expanduser()
 
 CENTER_FREQ_HZ = int(_config["radio"]["center_freq_hz"])
 SAMPLE_RATE_HZ = int(_config["radio"]["sample_rate_hz"])
