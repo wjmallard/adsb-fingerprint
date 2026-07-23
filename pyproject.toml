@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "RF fingerprinting of ADS-B transponders from RTL-SDR captures, after US 2022/0217619 A1"
 requires-python = ">=3.11"
 dependencies = [
+    "flask",
     "numpy",
     "pandas",
     "psycopg[binary]",
@@ -28,6 +29,7 @@ adsb-initdb = "adsb_fingerprint.db:main"
 adsb-stats = "adsb_fingerprint.stats:main"
 adsb-train = "adsb_fingerprint.train:main"
 adsb-variance = "adsb_fingerprint.variance:main"
+adsb-web = "adsb_fingerprint.web.app:main"
 
 [build-system]
 requires = ["hatchling"]

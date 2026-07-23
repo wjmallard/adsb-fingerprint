@@ -26,3 +26,16 @@ collect:
 receiver:
   latitude: 37.62              # your approximate location, for ADS-B position decode
   longitude: -122.38
+
+server:
+  host: 127.0.0.1
+  port: 5050                   # offline-maps owns 5000
+  debug: true
+
+map:
+  # Basemap shared with the offline-maps project (contiguous-US Protomaps
+  # extract, z0-15) — nothing here ever fetches tiles from the network.
+  tiles_file: ~/Github/offline-maps/data/basemap.pmtiles
+  default_zoom: 8              # wide enough to show the outer range ring
+  roster_minutes: 15           # roster window: aircraft heard this recently
+  rings_km: [50, 100, 150]     # range rings around the receiver

@@ -33,3 +33,15 @@ COLLECT_WINDOW_SECONDS = int(_config["collect"]["window_seconds"])
 _receiver = _config.get("receiver", {})
 RECEIVER_LAT = float(_receiver.get("latitude", 37.62))
 RECEIVER_LON = float(_receiver.get("longitude", -122.38))
+
+_server = _config.get("server", {})
+SERVER_HOST = _server.get("host", "127.0.0.1")
+SERVER_PORT = int(_server.get("port", 5050))
+SERVER_DEBUG = bool(_server.get("debug", True))
+
+_map = _config.get("map", {})
+MAP_TILES_PATH = Path(_map.get("tiles_file", "~/Github/offline-maps/data/basemap.pmtiles")).expanduser()
+MAP_TILES_FILE = MAP_TILES_PATH.name
+MAP_DEFAULT_ZOOM = _map.get("default_zoom", 8)
+MAP_ROSTER_MINUTES = int(_map.get("roster_minutes", 15))
+MAP_RINGS_KM = _map.get("rings_km", [50, 100, 150])

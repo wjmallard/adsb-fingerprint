@@ -1,0 +1,11 @@
+html,
+body {
+    margin: 0;
+    height: 100%;
+    background: #34373d;   /* matches the dark basemap while tiles load */
+}
+
+#map {
+    position: absolute;
+    inset: 0;
+}
