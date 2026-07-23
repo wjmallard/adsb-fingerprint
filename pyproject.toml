@@ -24,6 +24,7 @@ adsb-info = "adsb_fingerprint.info:main"
 adsb-ingest-faa = "adsb_fingerprint.ingest_faa:main"
 adsb-ingest-opensky = "adsb_fingerprint.ingest_opensky:main"
 adsb-initdb = "adsb_fingerprint.db:main"
+adsb-stats = "adsb_fingerprint.stats:main"
 
 [build-system]
 requires = ["hatchling"]
