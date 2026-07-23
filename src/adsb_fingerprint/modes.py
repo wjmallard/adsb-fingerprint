@@ -1,12 +1,14 @@
 """Mode S / ADS-B detection and demodulation from complex IQ.
 
 Finds DF17/DF18 extended-squitter preambles by magnitude correlation,
-PPM-demodulates each candidate on an oversampled grid, and keeps the ones that
-pass the pyModeS CRC. The CRC is the real filter, so the preamble detector is
-deliberately permissive.
+PPM-demodulates each candidate on an oversampled grid, keeps the ones that pass
+the pyModeS CRC, and decodes their fields (altitude, position, callsign,
+velocity). The CRC is the real filter, so the preamble detector is deliberately
+permissive.
 """
 
 import numpy as np
+import pyModeS as pms
 from pyModeS.util import crc, df, hex2bin, icao
 
 PREAMBLE_US = 8          # preamble length before the data block starts
@@ -41,10 +43,31 @@ def _demod(mag, start, spb):
     return _bits_to_hex(bits)
 
 
-def detect_messages(iq, sample_rate):
+def _decode(msg, reference):
+    # pyModeS v3: one decode() call returns whatever fields this message type
+    # carries. Position needs a receiver reference; everything else doesn't.
+    try:
+        info = pms.decode(msg, reference=reference) if reference else pms.decode(msg)
+    except Exception:
+        return {}
+    callsign = (info.get("callsign") or "").strip().rstrip("_") or None
+    return {
+        "altitude_ft": info.get("altitude"),
+        "latitude": info.get("latitude"),
+        "longitude": info.get("longitude"),
+        "callsign": callsign,
+        "ground_speed": info.get("groundspeed"),
+        "track": info.get("track"),
+        "vertical_rate": info.get("vertical_rate"),
+    }
+
+
+def detect_messages(iq, sample_rate, reference=None):
     """Yield validated DF17/DF18 messages found in complex IQ.
 
-    Each result is a dict: sample_offset, df, icao, type_code, hex, rssi_db.
+    Each result is a dict: sample_offset, df, icao, type_code, hex, rssi_db, and
+    the decoded fields (altitude_ft, latitude, longitude, callsign, ...).
+    reference is the receiver (lat, lon), required to resolve position.
     """
     spb = sample_rate / 1e6                       # samples per microsecond (per bit)
     mag = np.abs(iq).astype(np.float32)
@@ -92,5 +115,6 @@ def detect_messages(iq, sample_rate):
                     "type_code": int(hex2bin(msg)[32:37], 2),
                     "hex": msg,
                     "rssi_db": 20.0 * np.log10(level) if level > 0 else None,
+                    **_decode(msg, reference),
                 }
                 break

@@ -28,3 +28,7 @@ FREQ_CORRECTION_PPM = int(_config["radio"]["freq_correction_ppm"])
 
 COLLECT_MAX_PER_AIRCRAFT = int(_config["collect"]["max_per_aircraft"])
 COLLECT_WINDOW_SECONDS = int(_config["collect"]["window_seconds"])
+
+_receiver = _config.get("receiver", {})
+RECEIVER_LAT = float(_receiver.get("latitude", 37.62))
+RECEIVER_LON = float(_receiver.get("longitude", -122.38))

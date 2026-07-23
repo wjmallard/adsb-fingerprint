@@ -42,7 +42,15 @@ COPY_SQL = """
         icao,
         type_code,
         crc_ok,
-        rssi_db
+        rssi_db,
+        hex,
+        altitude_ft,
+        latitude,
+        longitude,
+        callsign,
+        ground_speed,
+        track,
+        vertical_rate
     )
     from stdin
 """
@@ -82,6 +90,7 @@ def collect(
     applied_gain = _apply_gain(device, gain)
     tuner = TUNERS.get(device.get_tuner_type(), "unknown")
 
+    reference = (config.RECEIVER_LAT, config.RECEIVER_LON)
     started = datetime.now(timezone.utc)
     session = session or started.strftime("%Y%m%dT%H%M%SZ")
     session_dir = config.CAPTURE_DIR / session
@@ -149,7 +158,7 @@ def collect(
                     continue
                 stats["maxq"] = max(stats["maxq"], block_queue.qsize())
                 buf = np.concatenate([carry, block])
-                for msg in modes.detect_messages(buf, sample_rate_hz):
+                for msg in modes.detect_messages(buf, sample_rate_hz, reference=reference):
                     offset = msg["sample_offset"]
                     if offset + WINDOW > len(buf):
                         continue
@@ -189,6 +198,14 @@ def collect(
                             msg["type_code"],
                             True,
                             msg["rssi_db"],
+                            msg["hex"],
+                            msg.get("altitude_ft"),
+                            msg.get("latitude"),
+                            msg.get("longitude"),
+                            msg.get("callsign"),
+                            msg.get("ground_speed"),
+                            msg.get("track"),
+                            msg.get("vertical_rate"),
                         )
                     )
                     n_stored += 1

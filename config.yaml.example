@@ -16,3 +16,7 @@ radio:
 collect:
   max_per_aircraft: 10         # keep at most this many messages per aircraft ...
   window_seconds: 30           # ... per this many seconds (0 disables the cap)
+
+receiver:
+  latitude: 37.62              # your approximate location, for ADS-B position decode
+  longitude: -122.38
