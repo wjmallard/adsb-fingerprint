@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv",
     "pyyaml",
     "scipy",
+    "torch",
     "tqdm",
 ]
 
