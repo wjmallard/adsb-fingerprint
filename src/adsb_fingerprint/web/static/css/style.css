@@ -174,3 +174,50 @@ body {
     background: #16181c;
     border-radius: 3px;
 }
+
+/* /embeddings — model-run index */
+#runs {
+    max-width: 720px;
+    padding: 24px;
+}
+
+#runs h1 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8a919c;
+}
+
+#runs code {
+    color: #8a919c;
+}
+
+.run {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 0;
+    border-bottom: 1px solid #2a2d33;
+}
+
+.run-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    color: #5ad1e6;
+    text-decoration: none;
+}
+
+.run-name:hover {
+    text-decoration: underline;
+}
+
+.run-name.muted {
+    color: #8a919c;
+}
+
+.run-meta {
+    margin-top: 2px;
+    font-size: 11px;
+    color: #5c636e;
+}

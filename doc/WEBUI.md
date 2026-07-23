@@ -78,6 +78,10 @@ independent of the model phases (P4–P6). Frontend patterns are lifted from
 - `GET /api/overlay` — receiver point + range-ring polygons, server-generated.
 - `GET /tiles/<file>` — the basemap `.pmtiles`, `conditional=True` for the
   range requests the pmtiles protocol needs (offline-maps pattern).
+- `GET /embeddings` — index of training runs under `paths.models` with their
+  `run.yaml` summaries (variant, classes, best balanced accuracy).
+- `GET /embeddings/<run>` — that run's self-contained `adsb-embed` viewer
+  (`embedding.html`, canvas 2D — no WebGL), served as-is.
 
 Aircraft state is "latest non-null per field" — position, velocity, and ident
 ride in different message types, so the newest row rarely has everything:

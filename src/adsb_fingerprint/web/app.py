@@ -3,6 +3,7 @@
 import json
 import time
 
+import yaml
 from flask import (
     Flask,
     abort,
@@ -127,6 +128,70 @@ def index():
         zoom=config.MAP_DEFAULT_ZOOM,
         roster_minutes=config.MAP_ROSTER_MINUTES,
     )
+
+
+@app.route("/embeddings")
+def embeddings():
+    # Index of training runs under paths.models — the web app is just a
+    # reader of the run dirs adsb-train/adsb-embed write.
+    return render_template(
+        "embeddings.html",
+        runs=embedding_runs(),
+    )
+
+
+@app.route("/embeddings/<run>")
+def embedding_viewer(run):
+    # The run segment is validated against the actual directory listing —
+    # no path arithmetic on user input.
+    if not config.MODEL_DIR.is_dir():
+        abort(404)
+    run_dirs = {d.name for d in config.MODEL_DIR.iterdir() if d.is_dir()}
+    if run not in run_dirs:
+        abort(404)
+    viewer = config.MODEL_DIR / run / "embedding.html"
+    if not viewer.is_file():
+        abort(404)
+    return send_file(viewer, conditional=True)
+
+
+def embedding_runs():
+    """Model run dirs, newest first, each with a run.yaml summary + viewer flag."""
+    if not config.MODEL_DIR.is_dir():
+        return []
+    runs = []
+    for run_dir in sorted(config.MODEL_DIR.iterdir(), reverse=True):
+        if not run_dir.is_dir():
+            continue
+        summary = {
+            "name": run_dir.name,
+            "has_viewer": (run_dir / "embedding.html").is_file(),
+            "variant": None,
+            "n_classes": None,
+            "epochs": None,
+            "best_balanced": None,
+        }
+        run_yaml = run_dir / "run.yaml"
+        if run_yaml.is_file():
+            try:
+                run = yaml.safe_load(run_yaml.read_text())
+                summary["variant"] = run.get("args", {}).get("variant")
+                summary["n_classes"] = len(run.get("classes", []))
+                epochs = run.get("epochs", [])
+                summary["epochs"] = len(epochs)
+                balanced = [
+                    epoch["balanced_accuracy"]
+                    for epoch in epochs
+                    if "balanced_accuracy" in epoch
+                ]
+                if balanced:
+                    summary["best_balanced"] = max(balanced)
+            except Exception:
+                # adsb-train rewrites run.yaml as it goes — a mid-write or
+                # malformed sidecar shouldn't take down the index.
+                pass
+        runs.append(summary)
+    return runs
 
 
 @app.route("/tiles/<path:filename>")

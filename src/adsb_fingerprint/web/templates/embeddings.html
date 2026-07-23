@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADS-B Embeddings</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <main id="runs">
+        <h1>embedding viewers</h1>
+        <p class="detail-note">
+            one per training run under paths.models —
+            generate with <code>adsb-embed &lt;run&gt;</code>
+        </p>
+        {% if not runs %}
+        <p class="detail-note">no model runs found</p>
+        {% endif %}
+        {% for run in runs %}
+        <div class="run">
+            {% if run.has_viewer %}
+            <a class="run-name" href="/embeddings/{{ run.name }}">{{ run.name }}</a>
+            {% else %}
+            <span class="run-name muted">{{ run.name }}</span>
+            {% endif %}
+            <span class="run-meta">
+                {%- if run.variant %}{{ run.variant }}{% endif %}
+                {%- if run.n_classes %} · {{ run.n_classes }} classes{% endif %}
+                {%- if run.epochs %} · {{ run.epochs }} epochs{% endif %}
+                {%- if run.best_balanced is not none %} · best balanced {{ "%.1f" | format(run.best_balanced * 100) }}%{% endif %}
+                {%- if not run.has_viewer %} · no viewer yet{% endif %}
+            </span>
+        </div>
+        {% endfor %}
+    </main>
+</body>
+</html>
