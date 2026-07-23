@@ -1,15 +1,6 @@
 """Flask app for the live aircraft map (doc/WEBUI.md) — W1 basemap, W2 live, W3 detail."""
 
-from math import (
-    asin,
-    atan2,
-    cos,
-    degrees,
-    pi,
-    radians,
-    sin,
-    sqrt,
-)
+import json
 
 from flask import (
     Flask,
@@ -26,30 +17,45 @@ from adsb_fingerprint import (
 
 app = Flask(__name__)
 
-EARTH_RADIUS_KM = 6371.0088
-
 # One row per aircraft heard in the window. Position, velocity, and ident ride
 # in different message types, so the newest row rarely has everything — each
-# field is independently "latest non-null".
+# field is independently "latest non-null". Distance/bearing from the receiver
+# are PostGIS geodesics over the latest fix; the receiver point is
+# parameterized from config until a GPS observing-location table exists.
 AIRCRAFT_SQL = """
+    with latest as (
+        select
+            icao,
+            count(*) as msg_count,
+            extract(epoch from now() - max(captured_at)) as age_s,
+            (array_agg(callsign order by captured_at desc) filter (where callsign is not null))[1] as callsign,
+            (array_agg(latitude order by captured_at desc) filter (where latitude is not null))[1] as latitude,
+            (array_agg(longitude order by captured_at desc) filter (where longitude is not null))[1] as longitude,
+            (array_agg(altitude_ft order by captured_at desc) filter (where altitude_ft is not null))[1] as altitude_ft,
+            (array_agg(ground_speed order by captured_at desc) filter (where ground_speed is not null))[1] as ground_speed,
+            (array_agg(track order by captured_at desc) filter (where track is not null))[1] as track,
+            (array_agg(vertical_rate order by captured_at desc) filter (where vertical_rate is not null))[1] as vertical_rate,
+            (array_agg(rssi_db order by captured_at desc) filter (where rssi_db is not null))[1] as rssi_db
+        from messages
+        where captured_at > now() - %(minutes)s * interval '1 minute'
+        and crc_ok
+        and icao is not null
+        group by icao
+    )
     select
-        icao,
-        count(*) as msg_count,
-        extract(epoch from now() - max(captured_at)) as age_s,
-        (array_agg(callsign order by captured_at desc) filter (where callsign is not null))[1] as callsign,
-        (array_agg(latitude order by captured_at desc) filter (where latitude is not null))[1] as latitude,
-        (array_agg(longitude order by captured_at desc) filter (where longitude is not null))[1] as longitude,
-        (array_agg(altitude_ft order by captured_at desc) filter (where altitude_ft is not null))[1] as altitude_ft,
-        (array_agg(ground_speed order by captured_at desc) filter (where ground_speed is not null))[1] as ground_speed,
-        (array_agg(track order by captured_at desc) filter (where track is not null))[1] as track,
-        (array_agg(vertical_rate order by captured_at desc) filter (where vertical_rate is not null))[1] as vertical_rate,
-        (array_agg(rssi_db order by captured_at desc) filter (where rssi_db is not null))[1] as rssi_db
-    from messages
-    where captured_at > now() - %(minutes)s * interval '1 minute'
-    and crc_ok
-    and icao is not null
-    group by icao
-    order by max(captured_at) desc
+        latest.*,
+        st_distance(
+            st_setsrid(st_makepoint(longitude, latitude), 4326)::geography,
+            st_setsrid(st_makepoint(%(receiver_lon)s, %(receiver_lat)s), 4326)::geography
+        ) / 1000.0 as distance_km,
+        degrees(
+            st_azimuth(
+                st_setsrid(st_makepoint(%(receiver_lon)s, %(receiver_lat)s), 4326)::geography,
+                st_setsrid(st_makepoint(longitude, latitude), 4326)::geography
+            )
+        ) as bearing_deg
+    from latest
+    order by age_s
 """
 
 REGISTRY_SQL = """
@@ -79,6 +85,22 @@ LIFETIME_SQL = """
     from messages
     where icao = %(icao)s
     and crc_ok
+"""
+
+# Range rings as ST_Buffer circles on geography (quad_segs=32 -> 129-point
+# rings), GeoJSON-encoded by PostGIS itself.
+RINGS_SQL = """
+    select
+        radius_km,
+        st_asgeojson(
+            st_buffer(
+                st_setsrid(st_makepoint(%(lon)s, %(lat)s), 4326)::geography,
+                radius_km * 1000.0,
+                'quad_segs=32'
+            ),
+            6
+        ) as geojson
+    from unnest(%(radii_km)s::float8[]) as radius_km
 """
 
 
@@ -113,25 +135,28 @@ def api_aircraft():
         type=float,
     )
     with db.connect() as conn:
-        rows = conn.execute(AIRCRAFT_SQL, {"minutes": minutes}).fetchall()
+        rows = conn.execute(
+            AIRCRAFT_SQL,
+            {
+                "minutes": minutes,
+                "receiver_lat": config.RECEIVER_LAT,
+                "receiver_lon": config.RECEIVER_LON,
+            },
+        ).fetchall()
     features = []
     for row in rows:
         geometry = None
-        distance_km = None
-        bearing_deg = None
         if row["latitude"] is not None and row["longitude"] is not None:
             geometry = {
                 "type": "Point",
                 "coordinates": [row["longitude"], row["latitude"]],
             }
-            distance_km, bearing_deg = distance_bearing_km(
-                config.RECEIVER_LAT,
-                config.RECEIVER_LON,
-                row["latitude"],
-                row["longitude"],
-            )
+        distance_km = row["distance_km"]
+        if distance_km is not None:
             distance_km = round(distance_km, 1)
-            bearing_deg = round(bearing_deg)
+        bearing_deg = row["bearing_deg"]
+        if bearing_deg is not None:
+            bearing_deg = round(bearing_deg) % 360
         features.append(
             {
                 "type": "Feature",
@@ -181,9 +206,17 @@ def api_aircraft_one(icao):
 
 @app.route("/api/overlay")
 def api_overlay():
-    # Receiver point + range-ring polygons, server-generated so the JS only
-    # ever draws coordinates it was handed (spherical trig here; PostGIS
-    # ST_Buffer is the W5 swap).
+    # Receiver point + range-ring polygons, all PostGIS-generated server-side
+    # — the JS only ever draws coordinates it was handed.
+    with db.connect() as conn:
+        rows = conn.execute(
+            RINGS_SQL,
+            {
+                "lat": config.RECEIVER_LAT,
+                "lon": config.RECEIVER_LON,
+                "radii_km": list(config.MAP_RINGS_KM),
+            },
+        ).fetchall()
     features = [
         {
             "type": "Feature",
@@ -196,22 +229,15 @@ def api_overlay():
             },
         },
     ]
-    for radius_km in config.MAP_RINGS_KM:
+    for row in rows:
         features.append(
             {
                 "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": ring_polygon(
-                        config.RECEIVER_LAT,
-                        config.RECEIVER_LON,
-                        radius_km,
-                    ),
-                },
+                "geometry": json.loads(row["geojson"]),
                 "properties": {
                     "kind": "ring",
-                    "label": f"{radius_km:g} km",
-                    "radius_km": radius_km,
+                    "label": f"{row['radius_km']:g} km",
+                    "radius_km": row["radius_km"],
                 },
             },
         )
@@ -219,42 +245,6 @@ def api_overlay():
         "type": "FeatureCollection",
         "features": features,
     }
-
-
-def distance_bearing_km(lat1_deg, lon1_deg, lat2_deg, lon2_deg):
-    """Great-circle distance (km) and initial bearing (deg) from point 1 to 2."""
-    lat1 = radians(lat1_deg)
-    lat2 = radians(lat2_deg)
-    dlat = lat2 - lat1
-    dlon = radians(lon2_deg - lon1_deg)
-    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-    distance = 2 * EARTH_RADIUS_KM * asin(sqrt(a))
-    bearing = degrees(
-        atan2(
-            sin(dlon) * cos(lat2),
-            cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon),
-        ),
-    ) % 360
-    return distance, bearing
-
-
-def ring_polygon(lat_deg, lon_deg, radius_km, points=128):
-    """Closed circle of geodesic radius around (lat, lon), as polygon coords."""
-    lat1 = radians(lat_deg)
-    lon1 = radians(lon_deg)
-    delta = radius_km / EARTH_RADIUS_KM
-    coords = []
-    for i in range(points + 1):
-        bearing = -2 * pi * i / points  # negative: counterclockwise exterior ring
-        lat2 = asin(
-            sin(lat1) * cos(delta) + cos(lat1) * sin(delta) * cos(bearing),
-        )
-        lon2 = lon1 + atan2(
-            sin(bearing) * sin(delta) * cos(lat1),
-            cos(delta) - sin(lat1) * sin(lat2),
-        )
-        coords.append([round(degrees(lon2), 6), round(degrees(lat2), 6)])
-    return [coords]
 
 
 def main():

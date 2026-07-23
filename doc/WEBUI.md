@@ -102,10 +102,12 @@ collector-maintained `aircraft_state` upsert table — noted, not planned.
 
 ## Spatial: PostGIS, not JS
 
-No spatial geometry math in the browser. Per-aircraft distance/bearing and the
-ring polygons come from the API — PostGIS (`ST_Distance` / `ST_Azimuth` /
-`ST_Buffer` on `geography`) once it lands; plain Python trig in the endpoint
-as the interim. The JS only ever draws coordinates it was handed.
+No spatial geometry math in the browser or in Python. Per-aircraft
+distance/bearing and the ring polygons come from the API — PostGIS
+(`ST_Distance` / `ST_Azimuth` / `ST_Buffer` on `geography`), with the
+receiver point parameterized from config until the GPS observing-location
+table exists (then the queries join that instead). The JS only ever draws
+coordinates it was handed.
 
 ## Basemap & dark style
 
@@ -155,5 +157,5 @@ map:
   (registry + live blocks).
 - W4 history: `/api/aircraft/<icao>/history` → trail + RSSI sparkline; radio
   block complete.
-- W5 polish (optional): dead reckoning, PostGIS-backed distance/bearing,
-  all-history roster toggle, SSE if ever needed.
+- W5 polish (optional): dead reckoning, all-history roster toggle, SSE if
+  ever needed.

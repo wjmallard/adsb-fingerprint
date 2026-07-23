@@ -363,7 +363,9 @@
             ["track", p.track != null ? `${Math.round(p.track)}°` : null],
             ["v/rate", p.vertical_rate != null ? `${p.vertical_rate} fpm` : null],
             ["position", position],
-            ["range", p.distance_km != null ? `${p.distance_km} km @ ${p.bearing_deg}°` : null],
+            ["range", p.distance_km != null
+                ? `${p.distance_km} km${p.bearing_deg != null ? ` @ ${p.bearing_deg}°` : ""}`
+                : null],
         ];
         slot.innerHTML = fieldsHtml(fields) || '<div class="detail-note">no live fields yet</div>';
     }
