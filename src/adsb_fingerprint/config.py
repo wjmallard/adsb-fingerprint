@@ -25,3 +25,6 @@ CENTER_FREQ_HZ = int(_config["radio"]["center_freq_hz"])
 SAMPLE_RATE_HZ = int(_config["radio"]["sample_rate_hz"])
 RADIO_GAIN = _config["radio"]["gain"]
 FREQ_CORRECTION_PPM = int(_config["radio"]["freq_correction_ppm"])
+
+COLLECT_MAX_PER_AIRCRAFT = int(_config["collect"]["max_per_aircraft"])
+COLLECT_WINDOW_SECONDS = int(_config["collect"]["window_seconds"])

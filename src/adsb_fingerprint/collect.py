@@ -7,6 +7,9 @@ detects messages, accumulates snippets + index rows in RAM, and flushes them to
 the per-session snippet store and the messages index in batches (keeping disk
 and commit latency out of the hot path). A small rolling tail is carried across
 blocks so a message straddling a boundary survives.
+
+A per-aircraft cap (config.yaml) keeps at most N messages per ICAO per time
+window, so one nearby aircraft can't dominate the dataset (or the disk).
 """
 
 import argparse
@@ -14,6 +17,7 @@ import queue
 import sys
 import threading
 import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -65,6 +69,8 @@ def collect(
     sample_rate_hz,
     gain,
     ppm,
+    max_per_aircraft,
+    window_seconds,
 ):
     from rtlsdr import RtlSdr
 
@@ -86,11 +92,12 @@ def collect(
     is_tty = sys.stdout.isatty()
 
     dur = f"{seconds:.0f}s" if seconds else "until Ctrl-C"
+    cap = f"cap {max_per_aircraft}/aircraft/{window_seconds}s" if max_per_aircraft > 0 else "no cap"
     print(
         f"collecting {dur} @ {center_freq_hz / 1e6:.3f} MHz, "
         f"{sample_rate_hz / 1e6:.3f} MSPS, "
         f"gain={'auto' if applied_gain is None else applied_gain}, "
-        f"tuner={tuner} (reader + processor threads)"
+        f"tuner={tuner} · reader+processor · {cap}"
     )
     print(f"  snippets -> {snippet_path}")
 
@@ -108,8 +115,12 @@ def collect(
     carry = np.empty(0, dtype=np.complex64)
     abs_base = 0
     last_abs = -guard
-    n_msgs = 0
+    n_detected = 0
+    n_stored = 0
+    n_capped = 0
     seen = set()
+    window_counts = defaultdict(int)
+    current_bucket = -1
     snips = []
     rows = []
     start = time.perf_counter()
@@ -146,28 +157,41 @@ def collect(
                     if abs_off <= last_abs + guard:
                         continue
                     last_abs = abs_off
+                    icao = msg["icao"]
+                    n_detected += 1
+                    if icao not in seen:
+                        seen.add(icao)
+                        print(f"\n  ✈  {icao}   (aircraft #{len(seen)})")
+                    elif is_tty:
+                        sys.stdout.write(".")
+                        sys.stdout.flush()
+
+                    if max_per_aircraft > 0:
+                        bucket = int(abs_off / sample_rate_hz / window_seconds)
+                        if bucket != current_bucket:
+                            current_bucket = bucket
+                            window_counts.clear()
+                        if window_counts[icao] >= max_per_aircraft:
+                            n_capped += 1
+                            continue
+                        window_counts[icao] += 1
+
                     snips.append(buf[offset : offset + WINDOW].copy())
                     rows.append(
                         (
                             snippet_rel,
-                            n_msgs * WINDOW,
+                            n_stored * WINDOW,
                             WINDOW,
                             started + timedelta(seconds=abs_off / sample_rate_hz),
                             session,
                             msg["df"],
-                            msg["icao"],
+                            icao,
                             msg["type_code"],
                             True,
                             msg["rssi_db"],
                         )
                     )
-                    n_msgs += 1
-                    if msg["icao"] not in seen:
-                        seen.add(msg["icao"])
-                        print(f"\n  ✈  {msg['icao']}   (aircraft #{len(seen)})")
-                    elif is_tty:
-                        sys.stdout.write(".")
-                        sys.stdout.flush()
+                    n_stored += 1
                 carry = buf[-CARRY:]
                 abs_base += len(buf) - len(carry)
                 now = time.perf_counter()
@@ -175,7 +199,8 @@ def collect(
                     flush(store, conn)
                     elapsed = now - start
                     print(
-                        f"\n[{elapsed:4.0f}s] {n_msgs} msgs  {n_msgs / elapsed:.1f}/s  "
+                        f"\n[{elapsed:4.0f}s] det {n_detected} · kept {n_stored} · "
+                        f"capped {n_capped} · {n_detected / elapsed:.1f}/s · "
                         f"{len(seen)} aircraft  |  read {stats['blocks_read']} blks  "
                         f"dropped {stats['blocks_dropped']}  qmax {stats['maxq']}"
                     )
@@ -191,8 +216,8 @@ def collect(
     elapsed = time.perf_counter() - start
     expected_blocks = elapsed * sample_rate_hz / BLOCK
     print(
-        f"\ncollected {n_msgs} messages in {elapsed:.0f}s "
-        f"({n_msgs / elapsed:.1f} msg/s), {len(seen)} aircraft"
+        f"\ncollected {n_detected} messages ({n_detected / elapsed:.1f}/s) in {elapsed:.0f}s, "
+        f"{len(seen)} aircraft — kept {n_stored}, capped {n_capped}"
     )
     print(
         f"  reader: {stats['blocks_read']} blocks read (~{expected_blocks:.0f} expected), "
@@ -200,7 +225,7 @@ def collect(
     )
     if snippet_path.exists():
         print(f"  snippet store: {snippet_path.stat().st_size / 1e6:.1f} MB")
-    return n_msgs
+    return n_stored
 
 
 def main():
@@ -214,6 +239,18 @@ def main():
     parser.add_argument("--sample-rate-hz", type=float, default=config.SAMPLE_RATE_HZ, help="Sample rate (Hz).")
     parser.add_argument("--ppm", type=int, default=config.FREQ_CORRECTION_PPM, help="Frequency correction (PPM).")
     parser.add_argument("--device-index", type=int, default=0, help="RTL-SDR device index.")
+    parser.add_argument(
+        "--max-per-aircraft",
+        type=int,
+        default=config.COLLECT_MAX_PER_AIRCRAFT,
+        help="Max messages kept per aircraft per window (0 = no cap; default: config.yaml).",
+    )
+    parser.add_argument(
+        "--window-seconds",
+        type=int,
+        default=config.COLLECT_WINDOW_SECONDS,
+        help="Cap window length in seconds (default: config.yaml).",
+    )
     args = parser.parse_args()
 
     collect(
@@ -224,6 +261,8 @@ def main():
         sample_rate_hz=args.sample_rate_hz,
         gain=args.gain,
         ppm=args.ppm,
+        max_per_aircraft=args.max_per_aircraft,
+        window_seconds=args.window_seconds,
     )
 
 

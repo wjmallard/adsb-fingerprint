@@ -12,3 +12,7 @@ radio:
   sample_rate_hz: 2400000      # RTL2832U stable max ~2.4 MSPS
   gain: auto                   # "auto" or a dB value like 40.0
   freq_correction_ppm: 0       # your dongle's measured PPM offset
+
+collect:
+  max_per_aircraft: 20         # keep at most this many messages per aircraft ...
+  window_seconds: 60           # ... per this many seconds (0 disables the cap)
