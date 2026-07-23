@@ -274,7 +274,7 @@ const SPLIT = ["train", "held-out", "other"];
 const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
 const tip = document.getElementById("tip");
 let mode = "aircraft", heldOnly = false, iso = new Set();
-let scale = 1, cx = 0, cy = 0, W = 0, H = 0, AX = 0, AY = 0;
+let scale = 1, cx = 0, cy = 0, W = 0, H = 0;
 
 function catColor(i) { return `hsl(${(i * 137.508) % 360}, 65%, ${48 + (i % 3) * 7}%)`; }
 const CORRECT = { "-1": "#5a6472", 0: "#e05252", 1: "#3ecf8e", other: "#4a90d9" };
@@ -311,33 +311,32 @@ function nameOf(k) {
 function passes(i) { return (!heldOnly || D.sp[i] === 1) && (iso.size === 0 || iso.has(key(i))); }
 function visible(i) { return !heldOnly || D.sp[i] === 1; }
 
-function anchor() {
-  const bar = document.getElementById("bar").offsetHeight;
-  const side = document.getElementById("legend").offsetWidth;
-  AX = (W - side) / 2;
-  AY = bar + (H - bar) / 2;
-  return { w: W - side, h: H - bar };
-}
 function fit() {
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (let i = 0; i < N; i++) {
     x0 = Math.min(x0, D.xs[i]); x1 = Math.max(x1, D.xs[i]);
     y0 = Math.min(y0, D.ys[i]); y1 = Math.max(y1, D.ys[i]);
   }
-  const v = anchor();
-  cx = (x0 + x1) / 2; cy = (y0 + y1) / 2;
-  scale = 0.85 * Math.min(v.w / (x1 - x0 || 1), v.h / (y1 - y0 || 1));
+  const bar = document.getElementById("bar").offsetHeight;
+  const side = document.getElementById("legend").offsetWidth;
+  const dx = (x1 - x0) || 1, dy = (y1 - y0) || 1;
+  scale = 0.85 * Math.min((W - side) / dx, (H - bar) / dy);
+  // Prefer the window centre; slide left only as far as the legend demands.
+  const half = scale * dx / 2;
+  const ax = Math.max(Math.min(W / 2, W - side - 20 - half), 20 + half);
+  const ay = bar + (H - bar) / 2;
+  cx = (x0 + x1) / 2 + (W / 2 - ax) / scale;
+  cy = (y0 + y1) / 2 + (H / 2 - ay) / scale;
 }
 function resize() {
   const dpr = window.devicePixelRatio || 1;
   W = window.innerWidth; H = window.innerHeight;
   canvas.width = W * dpr; canvas.height = H * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  anchor();
   draw();
 }
-function sx(i) { return (D.xs[i] - cx) * scale + AX; }
-function sy(i) { return (D.ys[i] - cy) * scale + AY; }
+function sx(i) { return (D.xs[i] - cx) * scale + W / 2; }
+function sy(i) { return (D.ys[i] - cy) * scale + H / 2; }
 
 let raf = 0;
 function draw() { if (!raf) raf = requestAnimationFrame(paint); }
@@ -436,9 +435,9 @@ window.onmousemove = (e) => {
 canvas.onwheel = (e) => {
   e.preventDefault();
   const f = Math.exp(-e.deltaY * 0.0015);
-  const wx = (e.clientX - AX) / scale + cx, wy = (e.clientY - AY) / scale + cy;
+  const wx = (e.clientX - W / 2) / scale + cx, wy = (e.clientY - H / 2) / scale + cy;
   scale *= f;
-  cx = wx - (e.clientX - AX) / scale; cy = wy - (e.clientY - AY) / scale;
+  cx = wx - (e.clientX - W / 2) / scale; cy = wy - (e.clientY - H / 2) / scale;
   draw();
 };
 canvas.ondblclick = () => { fit(); draw(); };
