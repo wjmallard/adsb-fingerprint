@@ -29,7 +29,8 @@ BLOCK = 131072           # samples per read (~55 ms at 2.4 MSPS); multiple of 51
 CARRY = 1024             # rolling-buffer tail carried between blocks
 WINDOW = 384             # samples stored per message (288-sample message + margin)
 QUEUE_BLOCKS = 256       # ~256 MB cap; reader only drops (counted) if this fills
-CHECKPOINT_S = 15        # seconds between progress/flush checkpoints
+FLUSH_S = 1              # seconds between DB/snippet flushes (keeps the index near-real-time)
+PRINT_S = 30             # seconds between progress lines
 
 COPY_SQL = """
     copy messages (
@@ -133,7 +134,8 @@ def collect(
     snips = []
     rows = []
     start = time.perf_counter()
-    last_ckpt = start
+    last_flush = start
+    last_print = start
 
     def flush(store, conn):
         if snips:
@@ -212,8 +214,10 @@ def collect(
                 carry = buf[-CARRY:]
                 abs_base += len(buf) - len(carry)
                 now = time.perf_counter()
-                if now - last_ckpt >= CHECKPOINT_S:
+                if now - last_flush >= FLUSH_S:
                     flush(store, conn)
+                    last_flush = now
+                if now - last_print >= PRINT_S:
                     elapsed = now - start
                     print(
                         f"\n[{elapsed:4.0f}s] det {n_detected} · kept {n_stored} · "
@@ -221,7 +225,7 @@ def collect(
                         f"{len(seen)} aircraft  |  read {stats['blocks_read']} blks  "
                         f"dropped {stats['blocks_dropped']}  qmax {stats['maxq']}"
                     )
-                    last_ckpt = now
+                    last_print = now
         except KeyboardInterrupt:
             print("\ninterrupted.")
         finally:
