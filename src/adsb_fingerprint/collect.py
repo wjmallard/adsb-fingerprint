@@ -8,8 +8,11 @@ the per-session snippet store and the messages index in batches (keeping disk
 and commit latency out of the hot path). A small rolling tail is carried across
 blocks so a message straddling a boundary survives.
 
-A per-aircraft cap (config.yaml) keeps at most N messages per ICAO per time
-window, so one nearby aircraft can't dominate the dataset (or the disk).
+A per-aircraft cap (config.yaml) keeps the first N messages per ICAO per time
+window — micro-clusters: back-to-back replicates that pin the per-message
+noise floor, in windows spaced apart for fresh geometry — so one nearby
+aircraft can't dominate the dataset (or the disk). Ident messages (TC 1-4,
+the callsign) are exempt, with their own small allowance per window.
 """
 
 import argparse
@@ -31,6 +34,7 @@ WINDOW = 384             # samples stored per message (288-sample message + marg
 QUEUE_BLOCKS = 256       # ~256 MB cap; reader only drops (counted) if this fills
 FLUSH_S = 1              # seconds between DB/snippet flushes (keeps the index near-real-time)
 PRINT_S = 30             # seconds between progress lines
+IDENT_ALLOWANCE = 1      # cap-exempt ident (TC 1-4, callsign) messages per aircraft per window
 
 COPY_SQL = """
     copy messages (
@@ -102,7 +106,11 @@ def collect(
     is_tty = sys.stdout.isatty()
 
     dur = f"{seconds:.0f}s" if seconds else "until Ctrl-C"
-    cap = f"cap {max_per_aircraft}/aircraft/{window_seconds}s" if max_per_aircraft > 0 else "no cap"
+    cap = (
+        f"cap {max_per_aircraft}/aircraft/{window_seconds}s (+{IDENT_ALLOWANCE} ident)"
+        if max_per_aircraft > 0
+        else "no cap"
+    )
     print(
         f"collecting {dur} @ {center_freq_hz / 1e6:.3f} MHz, "
         f"{sample_rate_hz / 1e6:.3f} MSPS, "
@@ -130,6 +138,7 @@ def collect(
     n_capped = 0
     seen = set()
     window_counts = defaultdict(int)
+    ident_counts = defaultdict(int)
     current_bucket = -1
     snips = []
     rows = []
@@ -182,10 +191,14 @@ def collect(
                         if bucket != current_bucket:
                             current_bucket = bucket
                             window_counts.clear()
-                        if window_counts[icao] >= max_per_aircraft:
+                            ident_counts.clear()
+                        if 1 <= msg["type_code"] <= 4 and ident_counts[icao] < IDENT_ALLOWANCE:
+                            ident_counts[icao] += 1
+                        elif window_counts[icao] >= max_per_aircraft:
                             n_capped += 1
                             continue
-                        window_counts[icao] += 1
+                        else:
+                            window_counts[icao] += 1
 
                     snips.append(buf[offset : offset + WINDOW].copy())
                     rows.append(

@@ -14,8 +14,12 @@ radio:
   freq_correction_ppm: 0       # your dongle's measured PPM offset
 
 collect:
-  max_per_aircraft: 10         # keep at most this many messages per aircraft ...
-  window_seconds: 30           # ... per this many seconds (0 disables the cap)
+  # Micro-cluster sampling: the first N messages per window arrive back-to-back
+  # (tight replicates -> per-message noise floor); successive windows sample
+  # fresh geometry along the flight path. Ident messages (TC 1-4, callsign) are
+  # exempt from the cap, with their own allowance of 1 per window.
+  max_per_aircraft: 3          # keep at most this many messages per aircraft ...
+  window_seconds: 10           # ... per this many seconds (0 disables the cap)
 
 receiver:
   latitude: 37.62              # your approximate location, for ADS-B position decode

@@ -23,9 +23,10 @@ independent of the model phases (P4–P6). Frontend patterns are lifted from
   last-seen desc; live rows bright, stale rows dimmed.
 - Map: markers fade after ~60 s without a message, drop after ~5 min (the
   aircraft stays rostered).
-- The per-aircraft collect cap means each aircraft's stored messages arrive as
-  a short burst per cap window, then silence — accepted for v1. Optional
-  polish: client dead reckoning (project along `track` at `ground_speed`).
+- The collect cap stores a micro-cluster (~3 back-to-back messages) per
+  aircraft every 10 s, so each aircraft's map position refreshes on roughly
+  that cadence. Optional polish: client dead reckoning (project along `track`
+  at `ground_speed`).
 - Sessions collected before decode existed have no lat/lon and simply never
   appear on the map (the window is recent anyway). A snippet re-decode
   backfill is possible later if ever wanted.
