@@ -21,6 +21,7 @@ dependencies = [
 adsb-capture = "adsb_fingerprint.capture:main"
 adsb-collect = "adsb_fingerprint.collect:main"
 adsb-dataset = "adsb_fingerprint.dataset:main"
+adsb-eval = "adsb_fingerprint.evaluate:main"
 adsb-index = "adsb_fingerprint.index:main"
 adsb-info = "adsb_fingerprint.info:main"
 adsb-ingest-faa = "adsb_fingerprint.ingest_faa:main"
