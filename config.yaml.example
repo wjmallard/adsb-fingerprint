@@ -14,5 +14,5 @@ radio:
   freq_correction_ppm: 0       # your dongle's measured PPM offset
 
 collect:
-  max_per_aircraft: 20         # keep at most this many messages per aircraft ...
-  window_seconds: 60           # ... per this many seconds (0 disables the cap)
+  max_per_aircraft: 10         # keep at most this many messages per aircraft ...
+  window_seconds: 30           # ... per this many seconds (0 disables the cap)
