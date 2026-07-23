@@ -91,7 +91,8 @@ class ADCC(nn.Module):
         """Input samples the final output position can see."""
         return 1 + (self.kernel_size - 1) * (1 + sum(self.dilations))
 
-    def forward(self, x):
+    def features(self, x):
+        """Pooled embedding (the penultimate layer, before class logits)."""
         x = self.input_conv(F.pad(x, (self.kernel_size - 1, 0)))
         skips = 0
         for block in self.blocks:
@@ -99,7 +100,10 @@ class ADCC(nn.Module):
             skips = skips + skip
         y = F.relu(skips)
         y = F.relu(self.head(y))
-        return self.classify(y.mean(dim=2))
+        return y.mean(dim=2)
+
+    def forward(self, x):
+        return self.classify(self.features(x))
 
 
 def main():

@@ -12,6 +12,7 @@ dependencies = [
     "pyrtlsdr[lib]",
     "python-dotenv",
     "pyyaml",
+    "scikit-learn",
     "scipy",
     "torch",
     "tqdm",
@@ -21,6 +22,7 @@ dependencies = [
 adsb-capture = "adsb_fingerprint.capture:main"
 adsb-collect = "adsb_fingerprint.collect:main"
 adsb-dataset = "adsb_fingerprint.dataset:main"
+adsb-embed = "adsb_fingerprint.embed:main"
 adsb-eval = "adsb_fingerprint.evaluate:main"
 adsb-index = "adsb_fingerprint.index:main"
 adsb-info = "adsb_fingerprint.info:main"
