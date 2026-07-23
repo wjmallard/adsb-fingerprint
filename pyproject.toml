@@ -7,7 +7,7 @@ dependencies = [
     "numpy",
     "psycopg[binary]",
     "pyModeS",
-    "pyrtlsdr",
+    "pyrtlsdr[lib]",
     "python-dotenv",
     "pyyaml",
     "scipy",
