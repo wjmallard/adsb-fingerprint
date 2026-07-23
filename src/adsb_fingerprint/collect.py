@@ -13,6 +13,10 @@ window — micro-clusters: back-to-back replicates that pin the per-message
 noise floor, in windows spaced apart for fresh geometry — so one nearby
 aircraft can't dominate the dataset (or the disk). Ident messages (TC 1-4,
 the callsign) are exempt, with their own small allowance per window.
+
+Each session directory gets a session.yaml documenting the radio settings,
+receiver location, and sampling policy in effect (plus outcome counters on
+exit) — collection design is a covariate in any cross-session analysis.
 """
 
 import argparse
@@ -24,6 +28,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import yaml
 
 from adsb_fingerprint import config, db, modes
 from adsb_fingerprint.capture import TUNERS, _apply_gain
@@ -102,8 +107,37 @@ def collect(
     session_dir.mkdir(parents=True, exist_ok=True)
     snippet_path = session_dir / "snippets.cf32"
     snippet_rel = str(snippet_path.relative_to(config.CAPTURE_DIR))
+    meta_path = session_dir / "session.yaml"      # not .json — adsb-index globs captures/**/*.json
     guard = int(round(modes.PREAMBLE_US * sample_rate_hz / 1e6))
     is_tty = sys.stdout.isatty()
+
+    def write_meta(outcome=None):
+        meta = {
+            "session": session,
+            "tool": "adsb-collect",
+            "started_at": started.isoformat(),
+            "radio": {
+                "center_freq_hz": int(center_freq_hz),
+                "sample_rate_hz": int(sample_rate_hz),
+                "gain": "auto" if applied_gain is None else float(gain),
+                "actual_gain_db": applied_gain,
+                "freq_correction_ppm": int(ppm),
+                "tuner": tuner,
+                "device_index": int(device_index),
+            },
+            "receiver": {
+                "latitude": config.RECEIVER_LAT,
+                "longitude": config.RECEIVER_LON,
+            },
+            "policy": {
+                "max_per_aircraft": max_per_aircraft,
+                "window_seconds": window_seconds,
+                "ident_allowance": IDENT_ALLOWANCE,
+            },
+        }
+        if outcome is not None:
+            meta["outcome"] = outcome
+        meta_path.write_text(yaml.safe_dump(meta, sort_keys=False))
 
     dur = f"{seconds:.0f}s" if seconds else "until Ctrl-C"
     cap = (
@@ -118,6 +152,8 @@ def collect(
         f"tuner={tuner} · reader+processor · {cap}"
     )
     print(f"  snippets -> {snippet_path}")
+    print(f"  meta     -> {meta_path}")
+    write_meta()
 
     device.read_samples(1024)                     # discard first read (PLL settle)
 
@@ -259,6 +295,19 @@ def collect(
     )
     if snippet_path.exists():
         print(f"  snippet store: {snippet_path.stat().st_size / 1e6:.1f} MB")
+    write_meta(
+        outcome={
+            "ended_at": datetime.now(timezone.utc).isoformat(),
+            "elapsed_s": round(elapsed, 1),
+            "detected": n_detected,
+            "stored": n_stored,
+            "capped": n_capped,
+            "aircraft": len(seen),
+            "blocks_read": stats["blocks_read"],
+            "blocks_dropped": stats["blocks_dropped"],
+            "qmax": stats["maxq"],
+        },
+    )
     return n_stored
 
 
