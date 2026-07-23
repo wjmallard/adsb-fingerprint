@@ -9,7 +9,27 @@
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <div id="map"></div>
+    <div id="map">
+        <div id="status-chip" class="chip">connecting…</div>
+    </div>
+    <div id="panels">
+        <section id="roster">
+            <header>roster <span id="roster-count"></span></header>
+            <div class="row head">
+                <span class="dot"></span>
+                <span class="icao">icao</span>
+                <span class="callsign">flight</span>
+                <span class="age">age</span>
+                <span class="alt">alt ft</span>
+                <span class="rssi">dB</span>
+            </div>
+            <div id="roster-rows" class="rows"></div>
+        </section>
+        <section id="detail">
+            <header>selected</header>
+            <div class="placeholder">nothing selected yet</div>
+        </section>
+    </div>
 
     <script src="/static/vendor/maplibre-gl.js"></script>
     <script src="/static/vendor/pmtiles.js"></script>
@@ -17,6 +37,7 @@
         window.MAP_CONFIG = {
             center: {{ center | tojson }},
             zoom: {{ zoom | tojson }},
+            rosterMinutes: {{ roster_minutes | tojson }},
             styleUrl: "/static/styles/basemap.json",
         };
     </script>

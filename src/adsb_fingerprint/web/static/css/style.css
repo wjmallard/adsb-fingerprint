@@ -5,7 +5,109 @@ body {
     background: #34373d;   /* matches the dark basemap while tiles load */
 }
 
+body {
+    display: flex;
+    flex-direction: column;
+    font: 13px/1.4 system-ui, sans-serif;
+    color: #c8cdd4;
+}
+
 #map {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+/* "last message Ns ago" — doubles as a collector-health indicator */
+.chip {
     position: absolute;
-    inset: 0;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(28, 30, 34, 0.85);
+    font-size: 12px;
+}
+
+.chip.warn {
+    background: rgba(122, 41, 41, 0.9);
+    color: #f0c8c8;
+}
+
+#panels {
+    display: grid;
+    grid-template-columns: 3fr 2fr;
+    height: 230px;
+    border-top: 1px solid #2a2d33;
+    background: #1c1e22;
+}
+
+#panels section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#detail {
+    border-left: 1px solid #2a2d33;
+}
+
+#panels header {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8a919c;
+}
+
+#roster-count {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.placeholder {
+    padding: 12px;
+    color: #5c636e;
+}
+
+.rows {
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.row {
+    display: grid;
+    grid-template-columns: 1.4em 4.5em 6.5em 3.2em 4.2em 2.8em;
+    gap: 0 8px;
+    padding: 2px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.row.head {
+    color: #5c636e;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+.row.stale {
+    opacity: 0.45;
+}
+
+.row .dot {
+    color: #7fd487;
+}
+
+.row.stale .dot {
+    color: #8a919c;
+}
+
+.row .age,
+.row .alt,
+.row .rssi {
+    text-align: right;
 }
