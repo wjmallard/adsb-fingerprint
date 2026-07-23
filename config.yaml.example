@@ -1,0 +1,14 @@
+# Copy to config.yaml (gitignored) and edit for your setup.
+
+database:
+  dbname: radio_classifier
+
+paths:
+  # Raw IQ captures — the source of truth. ~ is expanded.
+  captures: ~/radio-classifier-data/captures
+
+radio:
+  center_freq_hz: 1090000000   # ADS-B / Mode S downlink
+  sample_rate_hz: 2400000      # RTL2832U stable max ~2.4 MSPS
+  gain: auto                   # "auto" or a dB value like 40.0
+  freq_correction_ppm: 0       # your dongle's measured PPM offset
