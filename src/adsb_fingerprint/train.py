@@ -20,6 +20,7 @@ import argparse
 import time
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -112,6 +113,13 @@ def main():
         default=0.2,
         help="Fraction of sessions (newest) to hold out when --test-sessions is not given.",
     )
+    parser.add_argument(
+        "--match-run",
+        default=None,
+        help="Path to a previous run directory: reuse its exact train/test "
+        "sessions, ignoring any newer ones, so ablation runs stay comparable "
+        "(overrides --test-sessions/--test-fraction).",
+    )
     parser.add_argument("--min-train", type=int, default=50, help="Min training messages per ICAO.")
     parser.add_argument("--min-test", type=int, default=10, help="Min held-out messages per ICAO.")
     parser.add_argument(
@@ -129,6 +137,20 @@ def main():
     data = dataset.load_examples()
     if len(data["icao"]) == 0:
         raise SystemExit("no examples — capture and index some messages first")
+
+    if args.match_run:
+        matched = yaml.safe_load((Path(args.match_run) / "run.yaml").read_text())
+        universe = sorted(
+            set(matched["sessions"]["train"]) | set(matched["sessions"]["test"])
+        )
+        missing = sorted(set(universe) - set(data["session"].tolist()))
+        if missing:
+            raise SystemExit(f"matched run's sessions have no data: {', '.join(missing)}")
+        in_universe = np.isin(data["session"], universe)
+        for key in ("iq", "icao", "session", "captured_at", "rssi_db"):
+            data[key] = data[key][in_universe]
+        args.test_sessions = matched["sessions"]["test"]
+
     iq = dataset.apply_variant(data["iq"], args.variant)
 
     train_sessions, test_sessions = split_sessions(
