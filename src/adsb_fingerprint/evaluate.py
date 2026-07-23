@@ -6,17 +6,23 @@ balanced accuracy, a per-class breakdown with registry labels, and the top
 confusions. Given several runs over the same split — the whole /
 icao_masked / preamble ablation trio — it adds a comparison table.
 
-Two reference classifiers score the same split from cheap per-message
+Reference classifiers score the same split from cheap per-message
 features (features.py), no waveform learning:
 
   channel-only    {rssi_db, snr_db} — pure propagation. If this scores
                   high, the deep model may just be a range detector.
-  cheap-features  {rssi_db, snr_db, cfo_hz} — measured CFO is mostly
-                  oscillator offset (hardware), so this is a trivial
-                  handcrafted fingerprinter the deep model has to beat.
+  cfo-only        {cfo_hz} — measured CFO is mostly oscillator offset
+                  (hardware; between/within ratio ~19 per adsb-variance),
+                  so this is a pure crystal-offset lookup.
+  cheap-features  {rssi_db, snr_db, cfo_hz}
+  all-features    everything features.extract() measures — the strongest
+                  handcrafted baseline the deep model has to beat.
 
 Baseline features are always measured on the unablated IQ: they describe
-the received message, not the model's masked view of it.
+the received message, not the model's masked view of it. Features are
+screened at 10 robust sd of the training split (matching adsb-variance
+--screen-sd) — ~2% of CRC-clean messages carry corrupted phase from
+overlapping bursts, which would otherwise poison the baseline fits.
 """
 
 import argparse
@@ -37,8 +43,12 @@ from adsb_fingerprint.model import (
 
 BASELINES = {
     "channel-only": ["rssi_db", "snr_db"],
+    "cfo-only": ["cfo_hz"],
     "cheap-features": ["rssi_db", "snr_db", "cfo_hz"],
+    "all-features": ["rssi_db", *features.FEATURES],
 }
+
+SCREEN_SD = 10.0         # robust-sd outlier screen, as in adsb-variance
 
 
 def load_run(run_dir, which):
@@ -104,9 +114,24 @@ def feature_matrix(iq, rssi_db, index):
     return rows
 
 
+def screen(f_train, f_test, sd_limit=SCREEN_SD):
+    """NaN out values beyond sd_limit robust sd of the training column."""
+    median = np.nanmedian(f_train, axis=0)
+    sd = 1.4826 * np.nanmedian(np.abs(f_train - median), axis=0)
+    sd[sd == 0] = np.inf
+
+    def apply(f):
+        out = f.copy()
+        out[np.abs(f - median) > sd_limit * sd] = np.nan
+        return out
+
+    return apply(f_train), apply(f_test)
+
+
 def fit_baseline(f_train, y_train, f_test, n_classes, seed, steps=800):
-    """Small-MLP predictions on standardized features (NaN imputed at mean)."""
+    """Small-MLP predictions on screened, standardized features (NaN → mean)."""
     torch.manual_seed(seed)
+    f_train, f_test = screen(f_train, f_test)
     mean = np.nanmean(f_train, axis=0)
     std = np.nanstd(f_train, axis=0)
     std[std == 0] = 1.0
