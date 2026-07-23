@@ -1,14 +1,17 @@
 // Live ADS-B map: vendored dark PMTiles basemap centered on the receiver,
 // receiver + range rings from /api/overlay (W1), a 1 Hz poll of /api/aircraft
-// driving the plane symbols, the roster, and the status chip (W2), and
-// two-way selection with a registry + live detail panel (W3). All geometry is
-// server-generated — this file only draws coordinates it was handed.
+// driving the plane symbols, the roster, and the status chip (W2), two-way
+// selection with a registry + live detail panel (W3), and per-selection
+// history: position trail + RSSI sparkline + radio block (W4). All geometry
+// is server-generated — this file only draws coordinates it was handed.
 (function () {
     const cfg = window.MAP_CONFIG;
 
     const POLL_MS = 1000;
-    const STALE_S = 60;   // markers start fading, roster rows dim
-    const DROP_S = 300;   // markers leave the map (the aircraft stays rostered)
+    const STALE_S = 60;      // markers start fading, roster rows dim
+    const DROP_S = 300;      // markers leave the map (the aircraft stays rostered)
+    const SPARK_S = 600;     // RSSI sparkline window
+    const RATE_S = 60;       // message-rate window in the radio block
 
     // Nose-up plane glyph (Material Symbols "flight"), rasterized at 2x and
     // registered at runtime — no sprite-sheet edits.
@@ -28,6 +31,10 @@
 
     let selectedIcao = null;
     let lastFeatures = [];
+    let lastServerNow = null;
+
+    // Per-selection buffers: seeded from /history, extended by the 1 Hz poll.
+    let selection = null;   // { msgTimes, rssiPoints: [{t, rssi}], trailCoords, lastT }
 
     // The map needs WebGL; the roster, chip, and detail panel don't. If the
     // map can't come up (e.g. graphics acceleration disabled), keep polling
@@ -133,15 +140,27 @@
     function setupAircraftLayers(map) {
         map.addSource("aircraft", {
             type: "geojson",
-            data: {
-                type: "FeatureCollection",
-                features: [],
-            },
+            data: emptyCollection(),
+        });
+        map.addSource("trail", {
+            type: "geojson",
+            data: emptyCollection(),
         });
 
         const img = new Image(48, 48);
         img.onload = () => {
             map.addImage("plane", img, { pixelRatio: 2 });
+
+            map.addLayer({
+                id: "trail",
+                type: "line",
+                source: "trail",
+                paint: {
+                    "line-color": "#5ad1e6",
+                    "line-opacity": 0.65,
+                    "line-width": 1.5,
+                },
+            });
 
             map.addLayer({
                 id: "aircraft-selected",
@@ -214,11 +233,13 @@
             return;
         }
         lastFeatures = collection.features;
+        lastServerNow = collection.now;
         const source = map && map.getSource("aircraft");
         if (source) source.setData(collection);
         renderRoster(lastFeatures);
         renderChip(lastFeatures);
         renderDetailLive();
+        appendLiveSample();
     }
 
     function renderRoster(features) {
@@ -265,30 +286,87 @@
     async function selectAircraft(icao) {
         if (icao === selectedIcao) return;
         selectedIcao = icao;
+        selection = null;
         highlightSelection();
+        setTrail([]);
         const body = document.getElementById("detail-body");
         body.className = "";
         body.innerHTML = "";
         let info = null;
+        let history = null;
         try {
-            const resp = await fetch(`/api/aircraft/${icao}`);
-            if (resp.ok) info = await resp.json();
+            const [infoResp, historyResp] = await Promise.all([
+                fetch(`/api/aircraft/${icao}`),
+                fetch(`/api/aircraft/${icao}/history`),
+            ]);
+            if (infoResp.ok) info = await infoResp.json();
+            if (historyResp.ok) history = await historyResp.json();
         } catch (err) {
             console.error("detail load failed", err);
         }
         if (icao !== selectedIcao) return;   // reselected while fetching
+        seedSelection(history);
         renderDetailStatic(info);
         renderDetailLive();
+        updateRadio();
+        setTrail(selection.trailCoords);
     }
 
     function deselect() {
         if (selectedIcao === null) return;
         selectedIcao = null;
+        selection = null;
         highlightSelection();
+        setTrail([]);
         document.getElementById("detail-head").textContent = "selected";
         const body = document.getElementById("detail-body");
         body.className = "placeholder";
         body.textContent = "nothing selected yet";
+    }
+
+    function seedSelection(history) {
+        selection = {
+            msgTimes: [],
+            rssiPoints: [],
+            trailCoords: [],
+            lastT: 0,
+        };
+        for (const point of history?.points ?? []) {
+            selection.msgTimes.push(point.t);
+            selection.lastT = point.t;
+            if (point.rssi_db != null) {
+                selection.rssiPoints.push({ t: point.t, rssi: point.rssi_db });
+            }
+            if (point.lat != null && point.lon != null) {
+                selection.trailCoords.push([point.lon, point.lat]);
+            }
+        }
+    }
+
+    // Extend the selection's buffers from the 1 Hz payload — the newest
+    // message's server-side timestamp is (now - age_s), so history and live
+    // samples share one time axis and nothing is ever re-fetched.
+    function appendLiveSample() {
+        if (!selection || lastServerNow == null) return;
+        const feature = lastFeatures.find((f) => f.properties.icao === selectedIcao);
+        if (!feature) return;
+        const p = feature.properties;
+        const t = lastServerNow - p.age_s;
+        if (t <= selection.lastT + 0.5) return;   // same message as last poll
+        selection.lastT = t;
+        selection.msgTimes.push(t);
+        if (p.rssi_db != null) {
+            selection.rssiPoints.push({ t: t, rssi: p.rssi_db });
+        }
+        if (feature.geometry) {
+            const coord = feature.geometry.coordinates;
+            const last = selection.trailCoords[selection.trailCoords.length - 1];
+            if (!last || last[0] !== coord[0] || last[1] !== coord[1]) {
+                selection.trailCoords.push(coord);
+                setTrail(selection.trailCoords);
+            }
+        }
+        updateRadio();
     }
 
     function selectionFilter() {
@@ -306,7 +384,24 @@
         renderRoster(lastFeatures);
     }
 
-    // Registry + lifetime, fetched once per selection.
+    function setTrail(coords) {
+        const source = map && map.getSource("trail");
+        if (!source) return;
+        if (coords.length < 2) {
+            source.setData(emptyCollection());
+            return;
+        }
+        source.setData({
+            type: "Feature",
+            geometry: {
+                type: "LineString",
+                coordinates: coords,
+            },
+            properties: {},
+        });
+    }
+
+    // Registry + lifetime + radio skeleton, rendered once per selection.
     function renderDetailStatic(info) {
         const body = document.getElementById("detail-body");
         if (!info) {
@@ -334,9 +429,16 @@
         }
         blocks.push('<div class="block"><div class="block-title">live</div><div id="detail-live"></div></div>');
         blocks.push(
-            `<div class="detail-note">${info.msg_count.toLocaleString()} messages · `
-            + `${info.session_count} session${info.session_count === 1 ? "" : "s"} · `
-            + `first heard ${(info.first_heard ?? "").slice(0, 10) || "never"}</div>`,
+            '<div class="block"><div class="block-title">radio</div>'
+            + fieldsHtml([["messages", info.msg_count.toLocaleString()]])
+            + '<div class="field"><span class="label">rate</span><span class="value" id="radio-rate"></span></div>'
+            + fieldsHtml([["sessions", String(info.session_count)]])
+            + '<div class="field"><span class="label">rssi</span><span class="value" id="radio-rssi"></span></div>'
+            + '<canvas id="rssi-spark" class="spark"></canvas>'
+            + '</div>',
+        );
+        blocks.push(
+            `<div class="detail-note">first heard ${(info.first_heard ?? "").slice(0, 10) || "never"}</div>`,
         );
         body.innerHTML = blocks.join("");
     }
@@ -370,6 +472,54 @@
         slot.innerHTML = fieldsHtml(fields) || '<div class="detail-note">no live fields yet</div>';
     }
 
+    // Radio block: rate + latest RSSI + sparkline, from the selection buffers.
+    function updateRadio() {
+        if (!selection) return;
+        const rate = document.getElementById("radio-rate");
+        const rssi = document.getElementById("radio-rssi");
+        const spark = document.getElementById("rssi-spark");
+        if (!rate || !rssi || !spark) return;
+        const tMax = selection.lastT;
+        const recent = selection.msgTimes.filter((t) => t >= tMax - RATE_S).length;
+        rate.textContent = `${recent} msg/min`;
+        const latest = selection.rssiPoints[selection.rssiPoints.length - 1];
+        rssi.textContent = latest ? `${latest.rssi.toFixed(1)} dB` : "–";
+        drawSparkline(spark, selection.rssiPoints, tMax);
+    }
+
+    // Last SPARK_S seconds of per-message RSSI as dots on a 2D canvas.
+    function drawSparkline(canvas, points, tMax) {
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+        if (!width || !height) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, width, height);
+        const recent = points.filter((p) => p.t >= tMax - SPARK_S);
+        if (!recent.length) return;
+        const values = recent.map((p) => p.rssi);
+        let lo = Math.min(...values);
+        let hi = Math.max(...values);
+        if (hi - lo < 4) {   // keep a sane vertical scale for quiet traces
+            const mid = (hi + lo) / 2;
+            lo = mid - 2;
+            hi = mid + 2;
+        }
+        ctx.fillStyle = "#5ad1e6";
+        for (const p of recent) {
+            const x = ((p.t - (tMax - SPARK_S)) / SPARK_S) * width;
+            const y = height - 3 - ((p.rssi - lo) / (hi - lo)) * (height - 6);
+            ctx.fillRect(x - 1, y - 1, 2, 2);
+        }
+        ctx.fillStyle = "#5c636e";
+        ctx.font = "9px ui-monospace, monospace";
+        ctx.fillText(`${Math.round(hi)}`, 2, 9);
+        ctx.fillText(`${Math.round(lo)}`, 2, height - 3);
+    }
+
     function block(title, fields) {
         return `<div class="block"><div class="block-title">${title}</div>${fieldsHtml(fields)}</div>`;
     }
@@ -393,6 +543,13 @@
         if (seconds < 60) return `${Math.round(seconds)}s`;
         if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
         return `${Math.floor(seconds / 3600)}h`;
+    }
+
+    function emptyCollection() {
+        return {
+            type: "FeatureCollection",
+            features: [],
+        };
     }
 
     function escapeHtml(s) {

@@ -164,3 +164,13 @@ body {
     font-size: 11px;
     color: #5c636e;
 }
+
+/* 10-min RSSI sparkline (2D canvas — no WebGL involved) */
+.spark {
+    display: block;
+    width: 100%;
+    height: 36px;
+    margin-top: 6px;
+    background: #16181c;
+    border-radius: 3px;
+}

@@ -1,6 +1,7 @@
 """Flask app for the live aircraft map (doc/WEBUI.md) — W1 basemap, W2 live, W3 detail."""
 
 import json
+import time
 
 from flask import (
     Flask,
@@ -85,6 +86,20 @@ LIFETIME_SQL = """
     from messages
     where icao = %(icao)s
     and crc_ok
+"""
+
+HISTORY_SQL = """
+    select
+        extract(epoch from captured_at) as t,
+        latitude,
+        longitude,
+        altitude_ft,
+        rssi_db
+    from messages
+    where icao = %(icao)s
+    and captured_at > now() - %(minutes)s * interval '1 minute'
+    and crc_ok
+    order by captured_at
 """
 
 # Range rings as ST_Buffer circles on geography (quad_segs=32 -> 129-point
@@ -179,6 +194,9 @@ def api_aircraft():
     return {
         "type": "FeatureCollection",
         "features": features,
+        # Server clock, so the client can place appended live samples on the
+        # same time axis as /history's per-message t values (t = now - age_s).
+        "now": round(time.time(), 1),
     }
 
 
@@ -201,6 +219,39 @@ def api_aircraft_one(icao):
         "session_count": lifetime["session_count"],
         "first_heard": lifetime["first_heard"] and lifetime["first_heard"].isoformat(),
         "last_heard": lifetime["last_heard"] and lifetime["last_heard"].isoformat(),
+    }
+
+
+@app.route("/api/aircraft/<icao>/history")
+def api_aircraft_history(icao):
+    # Fetched once per selection: per-message points for the selected
+    # aircraft's trail and RSSI sparkline. The client appends live samples
+    # from the 1 Hz poll, so this is never re-fetched while selected.
+    minutes = request.args.get(
+        "minutes",
+        default=60,
+        type=float,
+    )
+    with db.connect() as conn:
+        rows = conn.execute(
+            HISTORY_SQL,
+            {
+                "icao": icao.upper(),
+                "minutes": minutes,
+            },
+        ).fetchall()
+    return {
+        "icao": icao.upper(),
+        "points": [
+            {
+                "t": round(float(row["t"]), 1),
+                "lat": row["latitude"],
+                "lon": row["longitude"],
+                "altitude_ft": row["altitude_ft"],
+                "rssi_db": row["rssi_db"],
+            }
+            for row in rows
+        ],
     }
 
 
