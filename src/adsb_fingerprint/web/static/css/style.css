@@ -38,7 +38,7 @@ body {
 #panels {
     display: grid;
     grid-template-columns: 3fr 2fr;
-    height: 230px;
+    height: 260px;
     border-top: 1px solid #2a2d33;
     background: #1c1e22;
 }
@@ -110,4 +110,57 @@ body {
 .row .alt,
 .row .rssi {
     text-align: right;
+}
+
+.row[data-icao] {
+    cursor: pointer;
+}
+
+.row[data-icao]:hover {
+    background: #22252b;
+}
+
+.row.selected {
+    background: #26313a;
+}
+
+#detail-body {
+    overflow-y: auto;
+    min-height: 0;
+    padding: 0 12px 10px;
+}
+
+.block {
+    margin-bottom: 10px;
+}
+
+.block-title {
+    margin-bottom: 2px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #5c636e;
+}
+
+.field {
+    display: grid;
+    grid-template-columns: 5.5em 1fr;
+    gap: 0 8px;
+    padding: 1px 0;
+    font-size: 12px;
+}
+
+.field .label {
+    padding-top: 1px;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #5c636e;
+}
+
+.detail-note {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #5c636e;
 }

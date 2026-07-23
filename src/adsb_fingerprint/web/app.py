@@ -1,4 +1,4 @@
-"""Flask app for the live aircraft map (doc/WEBUI.md) — W1 basemap, W2 live."""
+"""Flask app for the live aircraft map (doc/WEBUI.md) — W1 basemap, W2 live, W3 detail."""
 
 from math import (
     asin,
@@ -8,6 +8,7 @@ from math import (
     pi,
     radians,
     sin,
+    sqrt,
 )
 
 from flask import (
@@ -51,6 +52,35 @@ AIRCRAFT_SQL = """
     order by max(captured_at) desc
 """
 
+REGISTRY_SQL = """
+    select
+        icao,
+        registration,
+        manufacturer,
+        model,
+        type,
+        typecode,
+        owner,
+        owner_city,
+        owner_state,
+        operator,
+        country,
+        source
+    from aircraft
+    where icao = %(icao)s
+"""
+
+LIFETIME_SQL = """
+    select
+        count(*) as msg_count,
+        count(distinct session) as session_count,
+        min(captured_at) as first_heard,
+        max(captured_at) as last_heard
+    from messages
+    where icao = %(icao)s
+    and crc_ok
+"""
+
 
 @app.route("/")
 def index():
@@ -76,7 +106,7 @@ def tiles(filename):
 def api_aircraft():
     # The 1 Hz poll: GeoJSON FeatureCollection, one feature per active ICAO,
     # geometry null until a position fix. One payload drives the map, the
-    # roster, and (W3) the detail panel's live block.
+    # roster, and the detail panel's live block.
     minutes = request.args.get(
         "minutes",
         default=config.MAP_ROSTER_MINUTES,
@@ -86,13 +116,22 @@ def api_aircraft():
         rows = conn.execute(AIRCRAFT_SQL, {"minutes": minutes}).fetchall()
     features = []
     for row in rows:
+        geometry = None
+        distance_km = None
+        bearing_deg = None
         if row["latitude"] is not None and row["longitude"] is not None:
             geometry = {
                 "type": "Point",
                 "coordinates": [row["longitude"], row["latitude"]],
             }
-        else:
-            geometry = None
+            distance_km, bearing_deg = distance_bearing_km(
+                config.RECEIVER_LAT,
+                config.RECEIVER_LON,
+                row["latitude"],
+                row["longitude"],
+            )
+            distance_km = round(distance_km, 1)
+            bearing_deg = round(bearing_deg)
         features.append(
             {
                 "type": "Feature",
@@ -107,12 +146,36 @@ def api_aircraft():
                     "track": row["track"],
                     "vertical_rate": row["vertical_rate"],
                     "rssi_db": row["rssi_db"],
+                    "distance_km": distance_km,
+                    "bearing_deg": bearing_deg,
                 },
             },
         )
     return {
         "type": "FeatureCollection",
         "features": features,
+    }
+
+
+@app.route("/api/aircraft/<icao>")
+def api_aircraft_one(icao):
+    # Fetched once per selection: registry join + lifetime stats. FAA
+    # N-numbers are stored without their leading "N" — restore it here.
+    icao = icao.upper()
+    with db.connect() as conn:
+        registry = conn.execute(REGISTRY_SQL, {"icao": icao}).fetchone()
+        lifetime = conn.execute(LIFETIME_SQL, {"icao": icao}).fetchone()
+    if registry is None and lifetime["msg_count"] == 0:
+        abort(404)
+    if registry and registry["source"] == "faa" and registry["registration"]:
+        registry["registration"] = f"N{registry['registration']}"
+    return {
+        "icao": icao,
+        "registry": registry,
+        "msg_count": lifetime["msg_count"],
+        "session_count": lifetime["session_count"],
+        "first_heard": lifetime["first_heard"] and lifetime["first_heard"].isoformat(),
+        "last_heard": lifetime["last_heard"] and lifetime["last_heard"].isoformat(),
     }
 
 
@@ -156,6 +219,23 @@ def api_overlay():
         "type": "FeatureCollection",
         "features": features,
     }
+
+
+def distance_bearing_km(lat1_deg, lon1_deg, lat2_deg, lon2_deg):
+    """Great-circle distance (km) and initial bearing (deg) from point 1 to 2."""
+    lat1 = radians(lat1_deg)
+    lat2 = radians(lat2_deg)
+    dlat = lat2 - lat1
+    dlon = radians(lon2_deg - lon1_deg)
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    distance = 2 * EARTH_RADIUS_KM * asin(sqrt(a))
+    bearing = degrees(
+        atan2(
+            sin(dlon) * cos(lat2),
+            cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon),
+        ),
+    ) % 360
+    return distance, bearing
 
 
 def ring_polygon(lat_deg, lon_deg, radius_km, points=128):

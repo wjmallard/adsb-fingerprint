@@ -1,8 +1,8 @@
 // Live ADS-B map: vendored dark PMTiles basemap centered on the receiver,
-// receiver + range rings from /api/overlay (W1), and a 1 Hz poll of
-// /api/aircraft driving the plane symbols, the roster, and the status chip
-// (W2). All geometry is server-generated — this file only draws coordinates
-// it was handed.
+// receiver + range rings from /api/overlay (W1), a 1 Hz poll of /api/aircraft
+// driving the plane symbols, the roster, and the status chip (W2), and
+// two-way selection with a registry + live detail panel (W3). All geometry is
+// server-generated — this file only draws coordinates it was handed.
 (function () {
     const cfg = window.MAP_CONFIG;
 
@@ -26,9 +26,12 @@
         DROP_S, 0.3,
     ];
 
-    // The map needs WebGL; the roster and chip don't. If the map can't come
-    // up (e.g. graphics acceleration disabled), keep polling anyway so the
-    // page degrades to a live roster over a blank map area.
+    let selectedIcao = null;
+    let lastFeatures = [];
+
+    // The map needs WebGL; the roster, chip, and detail panel don't. If the
+    // map can't come up (e.g. graphics acceleration disabled), keep polling
+    // anyway so the page degrades to a live roster over a blank map area.
     let map = null;
     try {
         const protocol = new pmtiles.Protocol();
@@ -54,6 +57,13 @@
     } catch (err) {
         console.error("map init failed (WebGL unavailable?) — roster still live", err);
     }
+
+    document.getElementById("roster-rows").addEventListener("click", (e) => {
+        const row = e.target.closest(".row[data-icao]");
+        if (!row) return;
+        if (row.dataset.icao === selectedIcao) deselect();
+        else selectAircraft(row.dataset.icao);
+    });
 
     pollAircraft();
     setInterval(() => {
@@ -132,6 +142,20 @@
         const img = new Image(48, 48);
         img.onload = () => {
             map.addImage("plane", img, { pixelRatio: 2 });
+
+            map.addLayer({
+                id: "aircraft-selected",
+                type: "circle",
+                source: "aircraft",
+                filter: selectionFilter(),
+                paint: {
+                    "circle-radius": 14,
+                    "circle-color": "rgba(0, 0, 0, 0)",
+                    "circle-stroke-color": "#5ad1e6",
+                    "circle-stroke-width": 2,
+                },
+            });
+
             map.addLayer({
                 id: "aircraft",
                 type: "symbol",
@@ -158,6 +182,22 @@
                     "text-opacity": fadeByAge,
                 },
             });
+
+            // Two-way selection, map side: click a plane to select it,
+            // click empty map to deselect.
+            map.on("click", (e) => {
+                const hits = map.queryRenderedFeatures(e.point, {
+                    layers: ["aircraft"],
+                });
+                if (hits.length) selectAircraft(hits[0].properties.icao);
+                else deselect();
+            });
+            map.on("mouseenter", "aircraft", () => {
+                map.getCanvas().style.cursor = "pointer";
+            });
+            map.on("mouseleave", "aircraft", () => {
+                map.getCanvas().style.cursor = "";
+            });
         };
         img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(PLANE_SVG);
     }
@@ -173,17 +213,21 @@
             renderChip(null);
             return;
         }
+        lastFeatures = collection.features;
         const source = map && map.getSource("aircraft");
         if (source) source.setData(collection);
-        renderRoster(collection.features);
-        renderChip(collection.features);
+        renderRoster(lastFeatures);
+        renderChip(lastFeatures);
+        renderDetailLive();
     }
 
     function renderRoster(features) {
         const rows = features.map((f) => {
             const p = f.properties;
             const stale = p.age_s > STALE_S;
-            return `<div class="row${stale ? " stale" : ""}">`
+            const selected = p.icao === selectedIcao;
+            return `<div class="row${stale ? " stale" : ""}${selected ? " selected" : ""}"`
+                + ` data-icao="${escapeHtml(p.icao)}">`
                 + `<span class="dot">${stale ? "○" : "●"}</span>`
                 + `<span class="icao">${escapeHtml(p.icao)}</span>`
                 + `<span class="callsign">${escapeHtml(p.callsign ?? "")}</span>`
@@ -214,6 +258,133 @@
         const age = features[0].properties.age_s;
         chip.textContent = `last message ${fmtAge(age)} ago`;
         chip.classList.toggle("warn", age > STALE_S);
+    }
+
+    // ---- selection + detail panel -------------------------------------
+
+    async function selectAircraft(icao) {
+        if (icao === selectedIcao) return;
+        selectedIcao = icao;
+        highlightSelection();
+        const body = document.getElementById("detail-body");
+        body.className = "";
+        body.innerHTML = "";
+        let info = null;
+        try {
+            const resp = await fetch(`/api/aircraft/${icao}`);
+            if (resp.ok) info = await resp.json();
+        } catch (err) {
+            console.error("detail load failed", err);
+        }
+        if (icao !== selectedIcao) return;   // reselected while fetching
+        renderDetailStatic(info);
+        renderDetailLive();
+    }
+
+    function deselect() {
+        if (selectedIcao === null) return;
+        selectedIcao = null;
+        highlightSelection();
+        document.getElementById("detail-head").textContent = "selected";
+        const body = document.getElementById("detail-body");
+        body.className = "placeholder";
+        body.textContent = "nothing selected yet";
+    }
+
+    function selectionFilter() {
+        return [
+            "all",
+            ["==", ["get", "icao"], selectedIcao ?? ""],
+            ["<=", ["get", "age_s"], DROP_S],
+        ];
+    }
+
+    function highlightSelection() {
+        if (map && map.getLayer("aircraft-selected")) {
+            map.setFilter("aircraft-selected", selectionFilter());
+        }
+        renderRoster(lastFeatures);
+    }
+
+    // Registry + lifetime, fetched once per selection.
+    function renderDetailStatic(info) {
+        const body = document.getElementById("detail-body");
+        if (!info) {
+            body.innerHTML = '<div class="detail-note">no data for this aircraft</div>';
+            return;
+        }
+        const blocks = [];
+        const r = info.registry;
+        if (r) {
+            const fields = [
+                ["reg", r.registration],
+                ["aircraft", joinTruthy([r.manufacturer, r.model], " ")],
+                ["type", joinTruthy([r.type, r.typecode && `(${r.typecode})`], " ")],
+                ["owner", r.owner],
+                ["operator", r.operator !== r.owner ? r.operator : null],
+                ["based", joinTruthy([r.owner_city, r.owner_state], ", ") || r.country],
+                ["source", r.source],
+            ];
+            blocks.push(block("registry", fields));
+        } else {
+            blocks.push(
+                '<div class="block"><div class="block-title">registry</div>'
+                + '<div class="detail-note">not in registry</div></div>',
+            );
+        }
+        blocks.push('<div class="block"><div class="block-title">live</div><div id="detail-live"></div></div>');
+        blocks.push(
+            `<div class="detail-note">${info.msg_count.toLocaleString()} messages · `
+            + `${info.session_count} session${info.session_count === 1 ? "" : "s"} · `
+            + `first heard ${(info.first_heard ?? "").slice(0, 10) || "never"}</div>`,
+        );
+        body.innerHTML = blocks.join("");
+    }
+
+    // Live block, re-rendered from every poll's payload.
+    function renderDetailLive() {
+        if (!selectedIcao) return;
+        const feature = lastFeatures.find((f) => f.properties.icao === selectedIcao);
+        const p = feature?.properties;
+        document.getElementById("detail-head").textContent =
+            `selected — ${selectedIcao}${p?.callsign ? " · " + p.callsign : ""}`;
+        const slot = document.getElementById("detail-live");
+        if (!slot) return;
+        if (!feature) {
+            slot.innerHTML = `<div class="detail-note">not heard in the last ${cfg.rosterMinutes} min</div>`;
+            return;
+        }
+        const position = feature.geometry
+            ? `${feature.geometry.coordinates[1].toFixed(4)}, ${feature.geometry.coordinates[0].toFixed(4)}`
+            : null;
+        const fields = [
+            ["altitude", p.altitude_ft != null ? `${p.altitude_ft.toLocaleString()} ft` : null],
+            ["speed", p.ground_speed != null ? `${Math.round(p.ground_speed)} kt` : null],
+            ["track", p.track != null ? `${Math.round(p.track)}°` : null],
+            ["v/rate", p.vertical_rate != null ? `${p.vertical_rate} fpm` : null],
+            ["position", position],
+            ["range", p.distance_km != null ? `${p.distance_km} km @ ${p.bearing_deg}°` : null],
+        ];
+        slot.innerHTML = fieldsHtml(fields) || '<div class="detail-note">no live fields yet</div>';
+    }
+
+    function block(title, fields) {
+        return `<div class="block"><div class="block-title">${title}</div>${fieldsHtml(fields)}</div>`;
+    }
+
+    function fieldsHtml(fields) {
+        return fields
+            .filter(([, value]) => value)
+            .map(
+                ([label, value]) =>
+                    `<div class="field"><span class="label">${escapeHtml(label)}</span>`
+                    + `<span class="value">${escapeHtml(String(value))}</span></div>`,
+            )
+            .join("");
+    }
+
+    function joinTruthy(parts, separator) {
+        return parts.filter(Boolean).join(separator);
     }
 
     function fmtAge(seconds) {
