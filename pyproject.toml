@@ -5,6 +5,7 @@ description = "RF fingerprinting of ADS-B transponders from RTL-SDR captures, af
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "pandas",
     "psycopg[binary]",
     "pyModeS",
     "pyrtlsdr[lib]",
@@ -17,6 +18,8 @@ dependencies = [
 [project.scripts]
 adsb-capture = "adsb_fingerprint.capture:main"
 adsb-info = "adsb_fingerprint.info:main"
+adsb-ingest-faa = "adsb_fingerprint.ingest_faa:main"
+adsb-ingest-opensky = "adsb_fingerprint.ingest_opensky:main"
 adsb-initdb = "adsb_fingerprint.db:main"
 
 [build-system]
