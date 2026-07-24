@@ -25,7 +25,7 @@ collect:
 
 receiver:
   latitude: 37.62              # your approximate location, for ADS-B position decode
-  longitude: -122.38
+  longitude: -122.38           # (placeholder: SFO)
 
 server:
   host: 127.0.0.1
