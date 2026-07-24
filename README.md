@@ -14,6 +14,11 @@ airframe with the ID bits masked out, across receive geometries.
 
 [patent]: https://patents.google.com/patent/US20220217619A1/en
 
+![Live map: aircraft over the Bay Area with range rings, roster, and a registry-joined detail panel](doc/webui-map.png)
+*`adsb-web`, live over the collector's index: planes, range rings, the
+recently-heard roster, and a registry-joined detail panel (here an EVA Air
+777 over the South Bay). Receiver shown at the example-config placeholder.*
+
 ## The honest caveat (read first)
 
 A fixed receiver cannot control aircraft geometry, so the easiest signal
@@ -142,6 +147,11 @@ stats (message rate, sessions seen, RSSI sparkline). All spatial math is
 PostGIS; the browser only draws what the API hands it. `/embeddings` lists
 training runs and serves each one's self-contained embedding viewer. Design
 notes: [doc/WEBUI.md](doc/WEBUI.md).
+
+![Embedding viewer: t-SNE of message embeddings, colored by airframe](doc/embedding-viewer.png)
+*The embedding viewer for an ICAO-masked run: one point per message (10.5k
+shown), t-SNE of the model's 48-dim penultimate embedding, colored by
+airframe — the clusters are airframes, not channels.*
 
 ## Documentation
 
