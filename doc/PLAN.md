@@ -1,9 +1,9 @@
 # ADS-B Transponder Fingerprinting — Design
 
-A tinkering re-implementation of the RF-fingerprinting idea in
-US 2022/0217619 A1 ("Artificial Intelligence Radio Classifier and Identifier",
-BAE Systems), rescaled to what a Nooelec NESDR SMArt XTR (RTL2832U, 8-bit,
-~2.4 MSPS, E4000 tuner) can actually receive: ADS-B / Mode S at 1090 MHz.
+A toy implementation of the RF-fingerprinting idea in US 2022/0217619 A1
+("Artificial Intelligence Radio Classifier and Identifier", BAE Systems),
+rescaled to what a Nooelec NESDR SMArt XTR (RTL2832U, 8-bit, ~2.4 MSPS,
+E4000 tuner) can actually receive: ADS-B / Mode S at 1090 MHz.
 
 ## Goal
 

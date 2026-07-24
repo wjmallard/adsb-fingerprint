@@ -1,11 +1,10 @@
 # adsb-fingerprint
 
 RF fingerprinting of ADS-B transponders from RTL-SDR captures: identify the
-*physical transmitter*, not the identity it claims. A tinkering-scale
-re-implementation of the idea in [US 2022/0217619 A1][patent] ("Artificial
-Intelligence Radio Classifier and Identifier", BAE Systems), rescaled to what
-an RTL2832U dongle can actually receive — Mode S extended squitters at
-1090 MHz.
+*physical transmitter*, not the identity it claims. A toy implementation of the
+idea in [US 2022/0217619 A1][patent] ("Artificial Intelligence Radio Classifier
+and Identifier", BAE Systems), scaled to what an RTL2832U dongle can receive —
+Mode S extended squitters at 1090 MHz.
 
 Every ADS-B message carries the aircraft's 24-bit ICAO address: free ground
 truth, thousands of labeled bursts per hour from a home antenna. The model
