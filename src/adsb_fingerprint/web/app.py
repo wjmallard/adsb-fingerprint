@@ -1,4 +1,4 @@
-"""Flask app for the live aircraft map (doc/WEBUI.md) — W1 basemap, W2 live, W3 detail."""
+"""Flask app for the live aircraft map (doc/WEBUI.md), the /aircraft fleet table, and /embeddings."""
 
 import json
 import time
@@ -59,6 +59,84 @@ AIRCRAFT_SQL = """
     from latest
     order by age_s
 """
+
+# CPR decoding against a fixed reference is only unambiguous within 180 NM;
+# the rare rows beyond that are with_ref artifacts, not receptions, and must
+# not set an airframe's range record.
+WITH_REF_MAX_KM = 333
+
+# adsb-train's --min-train default: airframes at or past this message count
+# are eligible training classes.
+TRAIN_MIN_MESSAGES = 50
+
+# One row per airframe ever heard, joined against the registry. The date
+# cast groups by the server's local timezone, matching the day-held-out
+# bookkeeping elsewhere in the project. FAA N-numbers are stored without
+# their leading "N" — restored here so display and sort order agree. The
+# order-by slot is filled from FLEET_SORTS only, never from the request.
+FLEET_SQL = """
+    with per_message as (
+        select
+            icao,
+            session,
+            captured_at,
+            callsign,
+            st_distance(geom, receiver_geom) / 1000.0 as range_km
+        from messages
+        where crc_ok
+        and icao is not null
+    ),
+    seen as (
+        select
+            icao,
+            count(*) as msg_count,
+            count(distinct session) as session_count,
+            count(distinct captured_at::date) as day_count,
+            min(captured_at) as first_heard,
+            max(captured_at) as last_heard,
+            (array_agg(callsign order by captured_at desc) filter (where callsign is not null))[1] as callsign,
+            max(range_km) filter (where range_km <= %(max_range_km)s) as max_range_km
+        from per_message
+        group by icao
+    )
+    select
+        seen.icao,
+        seen.msg_count,
+        seen.session_count,
+        seen.day_count,
+        seen.first_heard,
+        seen.last_heard,
+        seen.callsign,
+        seen.max_range_km,
+        case
+            when aircraft.source = 'faa' and aircraft.registration is not null
+            then 'N' || aircraft.registration
+            else aircraft.registration
+        end as registration,
+        aircraft.manufacturer,
+        aircraft.model,
+        aircraft.typecode,
+        aircraft.owner,
+        aircraft.source
+    from seen
+    left join aircraft on aircraft.icao = seen.icao
+    order by {order_by}
+"""
+
+FLEET_SORTS = {
+    "aircraft": "manufacturer asc nulls last, model asc nulls last, icao asc",
+    "callsign": "callsign asc nulls last, icao asc",
+    "days": "day_count desc, msg_count desc",
+    "first": "first_heard asc",
+    "icao": "icao asc",
+    "last": "last_heard desc",
+    "msgs": "msg_count desc, icao asc",
+    "owner": "owner asc nulls last, icao asc",
+    "range": "max_range_km desc nulls last",
+    "registration": "registration asc nulls last, icao asc",
+    "sessions": "session_count desc, msg_count desc",
+    "type": "typecode asc nulls last, icao asc",
+}
 
 REGISTRY_SQL = """
     select
@@ -127,6 +205,42 @@ def index():
         center=[config.RECEIVER_LON, config.RECEIVER_LAT],
         zoom=config.MAP_DEFAULT_ZOOM,
         roster_minutes=config.MAP_ROSTER_MINUTES,
+    )
+
+
+@app.route("/aircraft")
+def aircraft():
+    # Every airframe ever heard, server-rendered in one page — this is a
+    # ~1500-row lifetime table loaded on demand, not a polled endpoint.
+    sort = request.args.get("sort", default="last")
+    if sort not in FLEET_SORTS:
+        sort = "last"
+    with db.connect() as conn:
+        rows = conn.execute(
+            FLEET_SQL.format(order_by=FLEET_SORTS[sort]),
+            {
+                "max_range_km": WITH_REF_MAX_KM,
+            },
+        ).fetchall()
+    for row in rows:
+        row["aircraft"] = " ".join(
+            part
+            for part in (row["manufacturer"], row["model"])
+            if part
+        )
+        row["first_heard"] = row["first_heard"].astimezone().strftime("%Y-%m-%d %H:%M")
+        row["last_heard"] = row["last_heard"].astimezone().strftime("%Y-%m-%d %H:%M")
+    totals = {
+        "airframes": f"{len(rows):,}",
+        "messages": f"{sum(row['msg_count'] for row in rows):,}",
+        "trainable": f"{sum(1 for row in rows if row['msg_count'] >= TRAIN_MIN_MESSAGES):,}",
+    }
+    return render_template(
+        "aircraft.html",
+        rows=rows,
+        sort=sort,
+        totals=totals,
+        min_train=TRAIN_MIN_MESSAGES,
     )
 
 

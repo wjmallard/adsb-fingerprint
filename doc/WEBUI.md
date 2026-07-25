@@ -78,6 +78,10 @@ independent of the model phases (P4–P6). Frontend patterns are lifted from
 - `GET /api/overlay` — receiver point + range-ring polygons, server-generated.
 - `GET /tiles/<file>` — the basemap `.pmtiles`, `conditional=True` for the
   range requests the pmtiles protocol needs (offline-maps pattern).
+- `GET /aircraft?sort=msgs` — the lifetime fleet table: one server-rendered
+  row per airframe ever heard (registry join, message/session/day counts,
+  max range with the >333 km `with_ref` artifacts filtered out), sortable by
+  any column header. Pure Jinja, no JS.
 - `GET /embeddings` — index of training runs under `paths.models` with their
   `run.yaml` summaries (variant, classes, best balanced accuracy).
 - `GET /embeddings/<run>` — that run's self-contained `adsb-embed` viewer
@@ -161,5 +165,5 @@ map:
   (registry + live blocks).
 - W4 history: `/api/aircraft/<icao>/history` → trail + RSSI sparkline; radio
   block complete.
-- W5 polish (optional): dead reckoning, all-history roster toggle, SSE if
-  ever needed.
+- W5 polish (optional): dead reckoning, SSE if ever needed. (The all-history
+  roster idea shipped as the `/aircraft` lifetime table page instead.)

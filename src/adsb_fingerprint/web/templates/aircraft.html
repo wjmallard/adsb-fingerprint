@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADS-B Aircraft</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <main id="fleet">
+        <h1>every airframe heard</h1>
+        <p class="detail-note">
+            {{ totals.airframes }} airframes ·
+            {{ totals.messages }} messages ·
+            {{ totals.trainable }} trainable (≥{{ min_train }} msgs, green)
+            — sort by any column header
+        </p>
+        {% macro th(key, label, numeric=false) -%}
+        <th{% if numeric %} class="num"{% endif %}><a href="?sort={{ key }}"{% if sort == key %} class="sorted"{% endif %}>{{ label }}</a></th>
+        {%- endmacro %}
+        <table>
+            <thead>
+                <tr>
+                    {{ th("icao", "icao") }}
+                    {{ th("callsign", "flight") }}
+                    {{ th("registration", "reg") }}
+                    {{ th("type", "type") }}
+                    {{ th("aircraft", "aircraft") }}
+                    {{ th("owner", "owner") }}
+                    {{ th("msgs", "msgs", numeric=true) }}
+                    {{ th("sessions", "sess", numeric=true) }}
+                    {{ th("days", "days", numeric=true) }}
+                    {{ th("range", "km", numeric=true) }}
+                    {{ th("first", "first heard") }}
+                    {{ th("last", "last heard") }}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr{% if row.msg_count >= min_train %} class="trainable"{% endif %}>
+                    <td>{{ row.icao }}</td>
+                    <td>{{ row.callsign or "" }}</td>
+                    <td>{{ row.registration or "" }}</td>
+                    <td>{{ row.typecode or "" }}</td>
+                    <td class="clip" title="{{ row.aircraft }}">{{ row.aircraft }}</td>
+                    <td class="clip" title="{{ row.owner or "" }}">{{ row.owner or "" }}</td>
+                    <td class="num msgs">{{ row.msg_count }}</td>
+                    <td class="num">{{ row.session_count }}</td>
+                    <td class="num">{{ row.day_count }}</td>
+                    <td class="num">{% if row.max_range_km is not none %}{{ "%.1f" | format(row.max_range_km) }}{% endif %}</td>
+                    <td>{{ row.first_heard }}</td>
+                    <td>{{ row.last_heard }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </main>
+</body>
+</html>

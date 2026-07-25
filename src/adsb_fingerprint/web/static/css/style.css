@@ -181,7 +181,8 @@ body {
     padding: 24px;
 }
 
-#runs h1 {
+#runs h1,
+#fleet h1 {
     margin: 0 0 4px;
     font-size: 14px;
     font-weight: 600;
@@ -220,4 +221,71 @@ body {
     margin-top: 2px;
     font-size: 11px;
     color: #5c636e;
+}
+
+/* /aircraft — every airframe ever heard */
+#fleet {
+    padding: 24px;
+}
+
+#fleet table {
+    margin-top: 12px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* Sticky header pins to the viewport once the intro scrolls away;
+   border-collapse stays "separate" so the border rides with it. */
+#fleet th {
+    position: sticky;
+    top: 0;
+    padding: 4px 8px;
+    background: #34373d;
+    border-bottom: 1px solid #2a2d33;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    text-align: left;
+    color: #5c636e;
+}
+
+#fleet th a {
+    color: inherit;
+    text-decoration: none;
+}
+
+#fleet th a:hover {
+    color: #c8cdd4;
+}
+
+#fleet th a.sorted {
+    color: #5ad1e6;
+}
+
+#fleet td {
+    padding: 2px 8px;
+}
+
+#fleet th.num,
+#fleet td.num {
+    text-align: right;
+}
+
+#fleet td.clip {
+    max-width: 16em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#fleet tbody tr:hover {
+    background: #2b2e34;
+}
+
+/* Airframes past adsb-train's --min-train threshold — the model's classes */
+#fleet tr.trainable td.msgs {
+    color: #7fd487;
 }
