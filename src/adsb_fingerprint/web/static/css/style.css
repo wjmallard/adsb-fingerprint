@@ -54,12 +54,33 @@ body {
 }
 
 #panels header {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
     padding: 6px 12px;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: #8a919c;
+}
+
+/* Cross-page links: right-aligned in the map's roster header (a flex row),
+   a plain line under the h1 on the standalone pages. */
+.page-nav {
+    display: flex;
+    gap: 10px;
+    margin-left: auto;
+    font-size: 11px;
+}
+
+.page-nav a {
+    color: #5c636e;
+    text-decoration: none;
+}
+
+.page-nav a:hover {
+    color: #5ad1e6;
 }
 
 #roster-count {
