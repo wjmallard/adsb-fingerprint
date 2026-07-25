@@ -52,8 +52,11 @@ independent of the model phases (P4–P6). Frontend patterns are lifted from
 ```
 
 - **Map**: receiver marker + range rings; aircraft as a GeoJSON symbol layer
-  with `icon-rotate` from `track`; the plane glyph is registered at runtime
-  via `map.addImage()` from an inline SVG (no sprite-sheet edits). Selected
+  with `icon-rotate` from `track`; the plane and heli glyphs are registered
+  at runtime via `map.addImage()` from inline SVGs (no sprite-sheet edits),
+  chosen per airframe by a registry-driven `glyph` property (FAA
+  `Rotorcraft`/`Gyroplane`, else OpenSky `H*`/`G*` class — FAA wins because
+  OpenSky has junk rows). Selected
   aircraft gets a highlight + trail line.
 - **Roster**: one line per airframe — live-dot · ICAO · callsign · age ·
   altitude · RSSI. Click row ↔ click plane (two-way selection).

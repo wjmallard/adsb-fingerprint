@@ -13,13 +13,29 @@
     const SPARK_S = 600;     // RSSI sparkline window
     const RATE_S = 60;       // message-rate window in the radio block
 
-    // Nose-up plane glyph (Material Symbols "flight"), rasterized at 2x and
-    // registered at runtime — no sprite-sheet edits.
-    const PLANE_SVG =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
-        + '<path fill="#ffd24d" stroke="#1c1e22" stroke-width="0.8" d="M21,16v-2l-8-5V3.5'
-        + 'C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1'
-        + 'v-1.5L13,19v-5.5L21,16z"/></svg>';
+    // Nose-up glyphs, rasterized at 2x and registered at runtime — no
+    // sprite-sheet edits. /api/aircraft's per-airframe glyph property picks
+    // one (registry-driven: rotorcraft get the heli). plane is Material
+    // Symbols "flight"; heli is hand-drawn — rotor X, cabin, tail boom.
+    const GLYPH_SVGS = {
+        plane:
+            '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
+            + '<path fill="#ffd24d" stroke="#1c1e22" stroke-width="0.8" d="M21,16v-2l-8-5V3.5'
+            + 'C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1'
+            + 'v-1.5L13,19v-5.5L21,16z"/></svg>',
+        heli:
+            '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
+            + '<g stroke="#1c1e22" stroke-width="2.6" stroke-linecap="round">'
+            + '<line x1="5.8" y1="4.3" x2="18.2" y2="16.7"/>'
+            + '<line x1="18.2" y1="4.3" x2="5.8" y2="16.7"/></g>'
+            + '<g stroke="#ffd24d" stroke-width="1.3" stroke-linecap="round">'
+            + '<line x1="5.8" y1="4.3" x2="18.2" y2="16.7"/>'
+            + '<line x1="18.2" y1="4.3" x2="5.8" y2="16.7"/></g>'
+            + '<path fill="#ffd24d" stroke="#1c1e22" stroke-width="0.8" '
+            + 'd="M12.65,13.6v4.9h1.9v1.4h-5.1v-1.4h1.9v-4.9z"/>'
+            + '<ellipse cx="12" cy="10.5" rx="2.7" ry="3.5" fill="#ffd24d" '
+            + 'stroke="#1c1e22" stroke-width="0.8"/></svg>',
+    };
 
     const fadeByAge = [
         "interpolate",
@@ -59,7 +75,7 @@
 
         map.on("load", async () => {
             await setupOverlay(map);
-            setupAircraftLayers(map);
+            await setupAircraftLayers(map);
         });
     } catch (err) {
         console.error("map init failed (WebGL unavailable?) — roster still live", err);
@@ -137,7 +153,24 @@
         });
     }
 
-    function setupAircraftLayers(map) {
+    function loadGlyph(map, name, svg) {
+        return new Promise((resolve) => {
+            const img = new Image(48, 48);
+            img.onload = () => {
+                map.addImage(name, img, { pixelRatio: 2 });
+                resolve();
+            };
+            img.onerror = (err) => {
+                // A bad glyph shouldn't sink every layer — those aircraft
+                // just render label-only until it's fixed.
+                console.error(`glyph "${name}" failed to load`, err);
+                resolve();
+            };
+            img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+        });
+    }
+
+    async function setupAircraftLayers(map) {
         map.addSource("aircraft", {
             type: "geojson",
             data: emptyCollection(),
@@ -147,78 +180,78 @@
             data: emptyCollection(),
         });
 
-        const img = new Image(48, 48);
-        img.onload = () => {
-            map.addImage("plane", img, { pixelRatio: 2 });
+        await Promise.all(
+            Object.entries(GLYPH_SVGS).map(
+                ([name, svg]) => loadGlyph(map, name, svg),
+            ),
+        );
 
-            map.addLayer({
-                id: "trail",
-                type: "line",
-                source: "trail",
-                paint: {
-                    "line-color": "#5ad1e6",
-                    "line-opacity": 0.65,
-                    "line-width": 1.5,
-                },
-            });
+        map.addLayer({
+            id: "trail",
+            type: "line",
+            source: "trail",
+            paint: {
+                "line-color": "#5ad1e6",
+                "line-opacity": 0.65,
+                "line-width": 1.5,
+            },
+        });
 
-            map.addLayer({
-                id: "aircraft-selected",
-                type: "circle",
-                source: "aircraft",
-                filter: selectionFilter(),
-                paint: {
-                    "circle-radius": 14,
-                    "circle-color": "rgba(0, 0, 0, 0)",
-                    "circle-stroke-color": "#5ad1e6",
-                    "circle-stroke-width": 2,
-                },
-            });
+        map.addLayer({
+            id: "aircraft-selected",
+            type: "circle",
+            source: "aircraft",
+            filter: selectionFilter(),
+            paint: {
+                "circle-radius": 14,
+                "circle-color": "rgba(0, 0, 0, 0)",
+                "circle-stroke-color": "#5ad1e6",
+                "circle-stroke-width": 2,
+            },
+        });
 
-            map.addLayer({
-                id: "aircraft",
-                type: "symbol",
-                source: "aircraft",
-                filter: ["<=", ["get", "age_s"], DROP_S],
-                layout: {
-                    "icon-image": "plane",
-                    "icon-size": 0.9,
-                    "icon-rotate": ["coalesce", ["get", "track"], 0],
-                    "icon-rotation-alignment": "map",
-                    "icon-allow-overlap": true,
-                    "text-field": ["coalesce", ["get", "callsign"], ["get", "icao"]],
-                    "text-font": ["Noto Sans Regular"],
-                    "text-size": 10,
-                    "text-offset": [0, 1.6],
-                    "text-anchor": "top",
-                    "text-optional": true,
-                },
-                paint: {
-                    "icon-opacity": fadeByAge,
-                    "text-color": "#c8cdd4",
-                    "text-halo-color": "#1c1e22",
-                    "text-halo-width": 1.5,
-                    "text-opacity": fadeByAge,
-                },
-            });
+        map.addLayer({
+            id: "aircraft",
+            type: "symbol",
+            source: "aircraft",
+            filter: ["<=", ["get", "age_s"], DROP_S],
+            layout: {
+                "icon-image": ["coalesce", ["get", "glyph"], "plane"],
+                "icon-size": 0.9,
+                "icon-rotate": ["coalesce", ["get", "track"], 0],
+                "icon-rotation-alignment": "map",
+                "icon-allow-overlap": true,
+                "text-field": ["coalesce", ["get", "callsign"], ["get", "icao"]],
+                "text-font": ["Noto Sans Regular"],
+                "text-size": 10,
+                "text-offset": [0, 1.6],
+                "text-anchor": "top",
+                "text-optional": true,
+            },
+            paint: {
+                "icon-opacity": fadeByAge,
+                "text-color": "#c8cdd4",
+                "text-halo-color": "#1c1e22",
+                "text-halo-width": 1.5,
+                "text-opacity": fadeByAge,
+            },
+        });
 
-            // Two-way selection, map side: click a plane to select it,
-            // click empty map to deselect.
-            map.on("click", (e) => {
-                const hits = map.queryRenderedFeatures(e.point, {
-                    layers: ["aircraft"],
-                });
-                if (hits.length) selectAircraft(hits[0].properties.icao);
-                else deselect();
+        // Two-way selection, map side: click a plane to select it,
+        // click empty map to deselect.
+        map.on("click", (e) => {
+            const hits = map.queryRenderedFeatures(e.point, {
+                layers: ["aircraft"],
             });
-            map.on("mouseenter", "aircraft", () => {
-                map.getCanvas().style.cursor = "pointer";
-            });
-            map.on("mouseleave", "aircraft", () => {
-                map.getCanvas().style.cursor = "";
-            });
-        };
-        img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(PLANE_SVG);
+            if (hits.length) selectAircraft(hits[0].properties.icao);
+            else deselect();
+        });
+        map.on("mouseenter", "aircraft", () => {
+            map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", "aircraft", () => {
+            map.getCanvas().style.cursor = "";
+        });
     }
 
     async function pollAircraft() {

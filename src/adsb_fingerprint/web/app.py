@@ -24,6 +24,7 @@ app = Flask(__name__)
 # field is independently "latest non-null". Distance/bearing from the receiver
 # are PostGIS geodesics over the latest fix; the receiver point is
 # parameterized from config until a GPS observing-location table exists.
+# The registry joins feed glyph_for() — which map symbol each airframe gets.
 AIRCRAFT_SQL = """
     with latest as (
         select
@@ -46,6 +47,8 @@ AIRCRAFT_SQL = """
     )
     select
         latest.*,
+        faa_aircraft.type_aircraft,
+        opensky_aircraft.icao_class,
         st_distance(
             st_setsrid(st_makepoint(longitude, latitude), 4326)::geography,
             st_setsrid(st_makepoint(%(receiver_lon)s, %(receiver_lat)s), 4326)::geography
@@ -57,6 +60,8 @@ AIRCRAFT_SQL = """
             )
         ) as bearing_deg
     from latest
+    left join faa_aircraft on faa_aircraft.icao = latest.icao
+    left join opensky_aircraft on opensky_aircraft.icao = latest.icao
     order by age_s
 """
 
@@ -318,6 +323,17 @@ def tiles(filename):
     return send_file(config.MAP_TILES_PATH, conditional=True)
 
 
+def glyph_for(faa_type, icao_class):
+    """Map-symbol class for an airframe. FAA is authoritative when present
+    (OpenSky has junk rows — e.g. a 737-9 classed H2T); OpenSky's leading
+    ICAO-class letter fills the gaps for foreign registrations."""
+    if faa_type:
+        return "heli" if faa_type in ("Rotorcraft", "Gyroplane") else "plane"
+    if icao_class and icao_class.startswith(("H", "G")):
+        return "heli"
+    return "plane"
+
+
 @app.route("/api/aircraft")
 def api_aircraft():
     # The 1 Hz poll: GeoJSON FeatureCollection, one feature per active ICAO,
@@ -358,6 +374,7 @@ def api_aircraft():
                 "properties": {
                     "icao": row["icao"],
                     "callsign": row["callsign"],
+                    "glyph": glyph_for(row["type_aircraft"], row["icao_class"]),
                     "age_s": round(float(row["age_s"]), 1),
                     "msg_count": row["msg_count"],
                     "altitude_ft": row["altitude_ft"],
