@@ -35,7 +35,10 @@ import torch
 from sklearn.manifold import TSNE
 from tqdm import tqdm
 
-from adsb_fingerprint import dataset
+from adsb_fingerprint import (
+    config,
+    dataset,
+)
 from adsb_fingerprint.evaluate import load_run
 from adsb_fingerprint.model import (
     iq_channels,
@@ -93,9 +96,9 @@ def knn_purity(embeddings, icaos, sessions, queries, k):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Write a UMAP embedding viewer (npz + self-contained html) into a run directory.",
+        description="Write a t-SNE embedding viewer (npz + self-contained html) into a run directory.",
     )
-    parser.add_argument("run", help="Run directory (from adsb-train).")
+    parser.add_argument("run", help="Run directory or bare run name under paths.models.")
     parser.add_argument(
         "--checkpoint",
         choices=("best", "last"),
@@ -116,6 +119,8 @@ def main():
     args = parser.parse_args()
 
     run_dir = Path(args.run).expanduser()
+    if not run_dir.is_dir():
+        run_dir = config.MODEL_DIR / args.run
     ckpt, net = load_run(run_dir, args.checkpoint)
     classes = ckpt["classes"]
 
