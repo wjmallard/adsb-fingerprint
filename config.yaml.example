@@ -29,7 +29,7 @@ receiver:
 
 server:
   host: 127.0.0.1
-  port: 5050                   # offline-maps owns 5000
+  port: 1090                   # the ADS-B downlink frequency, naturally
   debug: true
 
 map:
