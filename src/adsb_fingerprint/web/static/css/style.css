@@ -227,11 +227,17 @@ body {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 13px;
     color: #5ad1e6;
-    text-decoration: none;
 }
 
-.run-name:hover {
+/* Only runs with a generated viewer are anchors — underline them so
+   clickable-vs-not is legible at a glance (the muted spans stay plain). */
+a.run-name {
     text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+a.run-name:hover {
+    color: #8fe3f2;
 }
 
 .run-name.muted {
