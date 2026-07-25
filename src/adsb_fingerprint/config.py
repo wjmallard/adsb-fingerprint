@@ -34,6 +34,10 @@ _receiver = _config.get("receiver", {})
 RECEIVER_LAT = float(_receiver.get("latitude", 37.62))
 RECEIVER_LON = float(_receiver.get("longitude", -122.38))
 
+_gps = _config.get("gps", {})
+GPS_PORT = _gps.get("port", "/dev/cu.usbmodem*")
+GPS_TRACK_DIR = Path(_gps.get("tracks", "~/radio-classifier-data/gps/tracks")).expanduser()
+
 _server = _config.get("server", {})
 SERVER_HOST = _server.get("host", "127.0.0.1")
 SERVER_PORT = int(_server.get("port", 5050))

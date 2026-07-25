@@ -25,6 +25,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pymodes" },
     { name = "pyrtlsdr", extra = ["lib"] },
+    { name = "pyserial" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
@@ -42,6 +43,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"] },
     { name = "pymodes" },
     { name = "pyrtlsdr", extras = ["lib"] },
+    { name = "pyserial", specifier = ">=3.5" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
@@ -776,6 +778,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/24/62/2735b2ff8b2f7dc3bba5bbdf84032efd406af4d97859276128f3ff87bbf4/pyrtlsdrlib-0.0.5-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:b39ba0ad85fe0c87c6a4492bebdbd1843d013a3539f1820128fb67befd94bf64", size = 1281563, upload-time = "2026-07-05T16:46:20.594Z" },
     { url = "https://files.pythonhosted.org/packages/77/00/c84c70ca2fc5b248eaf626ef6e5d403a1c2847d6f174fb6e6bde8a45491c/pyrtlsdrlib-0.0.5-py3-none-win32.whl", hash = "sha256:9a745e7dfec8ad6f0a3e5bbea8b3ebdb1ced80334613c2ac43b1636ea9135f28", size = 1310314, upload-time = "2026-07-05T16:46:22.425Z" },
     { url = "https://files.pythonhosted.org/packages/ea/5f/b34cecfad50a820219f6bb3de8b038ee7fd5f7c318adae267ee5ef9697df/pyrtlsdrlib-0.0.5-py3-none-win_amd64.whl", hash = "sha256:f4f357ddcbf5354ad18e9c319723ea4f532cec4148da9afc4962de6e63bf9fbd", size = 1310320, upload-time = "2026-07-05T16:46:24.302Z" },
+]
+
+[[package]]
+name = "pyserial"
+version = "3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/7d/ae3f0a63f41e4d2f6cb66a5b57197850f919f59e558159a4dd3a818f5082/pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb", size = 159125, upload-time = "2020-11-23T03:59:15.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0", size = 90585, upload-time = "2020-11-23T03:59:13.41Z" },
 ]
 
 [[package]]

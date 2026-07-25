@@ -27,6 +27,14 @@ receiver:
   latitude: 37.62              # your approximate location, for ADS-B position decode
   longitude: -122.38           # (placeholder: SFO)
 
+gps:
+  # USB GPS puck (u-blox VK-162). The device path changes with the physical
+  # USB port, so this may be a glob — the first match wins.
+  port: /dev/cu.usbmodem*
+  # adsb-gps-log writes one CSV of timestamped fixes per UTC day here;
+  # adsb-geotag reads them back to position mobile sessions.
+  tracks: ~/radio-classifier-data/gps/tracks
+
 server:
   host: 127.0.0.1
   port: 1090                   # the ADS-B downlink frequency, naturally
