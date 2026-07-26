@@ -69,6 +69,25 @@ def select_classes(icaos, train_mask, test_mask, min_train, min_test):
     )
 
 
+def cap_per_class_day(train_idx, icaos, days, cap, rng):
+    """Randomly cap training examples per (ICAO, local day).
+
+    Spreads each class's training data across the days it was heard, so no
+    single day's channel and oscillator state dominates a class prototype.
+    """
+    capped = []
+    for icao in np.unique(icaos):
+        mask = icaos == icao
+        mine = train_idx[mask]
+        mine_days = days[mask]
+        for day in np.unique(mine_days):
+            rows = mine[mine_days == day]
+            if len(rows) > cap:
+                rows = rng.choice(rows, cap, replace=False)
+            capped.append(rows)
+    return np.sort(np.concatenate(capped))
+
+
 def evaluate(model, x, y, batch_size, device, n_classes):
     """Held-out overall accuracy, balanced accuracy, and per-class recall."""
     model.eval()
@@ -128,6 +147,14 @@ def main():
         default=0,
         help="Cap on training messages per ICAO, randomly subsampled (0 = no cap).",
     )
+    parser.add_argument(
+        "--max-per-class-day",
+        type=int,
+        default=0,
+        help="Cap on training messages per ICAO per local day, randomly "
+        "subsampled (0 = no cap): spreads each class's training data across "
+        "the days it was heard instead of letting one busy day dominate.",
+    )
     parser.add_argument("--device", default=None, help="Torch device (default: mps/cuda/cpu auto).")
     args = parser.parse_args()
 
@@ -175,6 +202,17 @@ def main():
     keep = np.isin(data["icao"], classes)
     train_idx = np.where(train_mask & keep)[0]
     test_idx = np.where(test_mask & keep)[0]
+    if args.max_per_class_day > 0:
+        days = np.array(
+            [t.astimezone().date().isoformat() for t in data["captured_at"][train_idx]],
+        )
+        train_idx = cap_per_class_day(
+            train_idx,
+            data["icao"][train_idx],
+            days,
+            args.max_per_class_day,
+            rng,
+        )
     if args.max_per_class > 0:
         capped = []
         for icao in classes:
