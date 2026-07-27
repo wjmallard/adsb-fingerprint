@@ -60,8 +60,8 @@
             <tbody id="rows"></tbody>
         </table>
         <p class="detail-note">
-            icao / reg / type come from the decoded address and the registry; the pred
-            columns come from the waveform alone. each message votes for its nearest
+            the reported columns come from the decoded address and the registry; the
+            pred columns come from the waveform alone. each message votes for its nearest
             enrolled signature over the last {{ minutes }} min — pred reg lists every
             candidate at ≥{{ (candidate * 100) | int }}% of a contact's votes, colored
             when the leader clears {{ (confident * 100) | int }}% (green = agrees with the
@@ -99,7 +99,7 @@
                      td.appendChild(badge);
                  }
              }},
-            {label: "reg", key: (c) => text(c.registration),
+            {label: "reported reg", key: (c) => text(c.registration),
              cell: (c, td) => td.textContent = text(c.registration)},
             {label: "pred reg", key: leaderName,
              cell: (c, td) => {
@@ -124,7 +124,7 @@
                      td.appendChild(line);
                  }
              }},
-            {label: "type", key: (c) => text(c.model), clip: true,
+            {label: "reported type", key: (c) => text(c.model), clip: true,
              cell: (c, td) => td.textContent = text(c.model)},
             {label: "pred type", key: (c) => text(c.radio_class), clip: true,
              cell: (c, td) => {
