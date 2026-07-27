@@ -98,12 +98,6 @@
              }},
             {label: "reported id", key: (c) => text(c.registration),
              cell: (c, td) => td.textContent = text(c.registration)},
-            {label: "reported radio", key: (c) => text(c.model), clip: true,
-             cell: (c, td) => td.textContent = text(c.model)},
-            {label: "predicted radio", key: (c) => text(c.radio_class), clip: true,
-             cell: (c, td) => td.textContent = text(c.radio_class) || "?"},
-            {label: "conf", key: (c) => c.radio_class_share, numeric: true, desc: true,
-             cell: (c, td) => td.textContent = `${Math.round(c.radio_class_share * 100)}%`},
             {label: "predicted ids", key: leaderName,
              cell: (c, td) => {
                  if (!c.candidates.length) {
@@ -118,7 +112,7 @@
                      td.appendChild(line);
                  }
              }},
-            {label: "confs", key: leaderShare, numeric: true, desc: true,
+            {label: "conf", key: leaderShare, numeric: true, desc: true,
              cell: (c, td) => {
                  for (const [i, cand] of c.candidates.entries()) {
                      const line = document.createElement("div");
@@ -127,6 +121,12 @@
                      td.appendChild(line);
                  }
              }},
+            {label: "reported radio", key: (c) => text(c.model), clip: true,
+             cell: (c, td) => td.textContent = text(c.model)},
+            {label: "predicted radio", key: (c) => text(c.radio_class), clip: true,
+             cell: (c, td) => td.textContent = text(c.radio_class) || "?"},
+            {label: "conf", key: (c) => c.radio_class_share, numeric: true, desc: true,
+             cell: (c, td) => td.textContent = `${Math.round(c.radio_class_share * 100)}%`},
             {label: "msgs", key: (c) => c.msg_count, numeric: true, desc: true,
              cell: (c, td) => td.textContent = c.msg_count},
             {label: "heard", key: (c) => c.age_s, numeric: true,
