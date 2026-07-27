@@ -9,6 +9,7 @@
     <style>
         #fleet td { vertical-align: top; }
         #fleet td.match { color: #7fd487; }
+        #fleet td.partial { color: #d9c979; }
         #fleet td.differ { color: #e08484; }
         #fleet td.blank, #fleet .dim { color: #6b7280; }
         #fleet .line { white-space: nowrap; }
@@ -66,9 +67,9 @@
             when the leader clears {{ (confident * 100) | int }}% (green = agrees with the
             reported address, red = disagrees). pred type is the airframe model voted by
             the nearest signatures — a registry label for the radio-fit cluster the
-            waveform lands in, colored the same way against the reported type — and it
-            works even for aircraft never enrolled (marked new). sort by any column
-            header.
+            waveform lands in, colored against the reported type (yellow = same model
+            family by shared prefix) — and it works even for aircraft never enrolled
+            (marked new). sort by any column header.
         </p>
     </main>
     <script>
@@ -131,6 +132,8 @@
                  if (c.model && c.radio_class) {
                      if (c.radio_class === c.model) {
                          td.classList.add("match");
+                     } else if (partialMatch(c.radio_class, c.model)) {
+                         td.classList.add("partial");
                      } else if (c.radio_class_share >= CONFIDENT) {
                          td.classList.add("differ");
                      }
@@ -145,6 +148,16 @@
                  ? `${Math.round(c.age_s)}s`
                  : `${Math.round(c.age_s / 60)}m`},
         ];
+
+        // Family-level model match: a shared prefix at least 3 chars long
+        // covering >= 65% of the shorter string. The ratio guard keeps
+        // cousins like PA-28…/PA-32…, MD-11/MD-90, and manufacturer-prefixed
+        // strings ("Airbus A321…" vs "Airbus A330…") from counting.
+        function partialMatch(a, b) {
+            let common = 0;
+            while (common < a.length && common < b.length && a[common] === b[common]) common++;
+            return common >= 3 && common / Math.min(a.length, b.length) >= 0.65;
+        }
 
         function lineClass(contact, candidate, i) {
             if (candidate.icao === contact.icao) return " match";
