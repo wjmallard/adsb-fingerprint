@@ -66,8 +66,9 @@
             when the leader clears {{ (confident * 100) | int }}% (green = agrees with the
             reported address, red = disagrees). pred type is the airframe model voted by
             the nearest signatures — a registry label for the radio-fit cluster the
-            waveform lands in, and it works even for aircraft never enrolled (marked
-            new). sort by any column header.
+            waveform lands in, colored the same way against the reported type — and it
+            works even for aircraft never enrolled (marked new). sort by any column
+            header.
         </p>
     </main>
     <script>
@@ -125,7 +126,16 @@
             {label: "type", key: (c) => text(c.model), clip: true,
              cell: (c, td) => td.textContent = text(c.model)},
             {label: "pred type", key: (c) => text(c.radio_class), clip: true,
-             cell: (c, td) => td.textContent = text(c.radio_class) || "?"},
+             cell: (c, td) => {
+                 td.textContent = text(c.radio_class) || "?";
+                 if (c.model && c.radio_class) {
+                     if (c.radio_class === c.model) {
+                         td.classList.add("match");
+                     } else if (c.radio_class_share >= CONFIDENT) {
+                         td.classList.add("differ");
+                     }
+                 }
+             }},
             {label: "conf", key: (c) => c.radio_class_share, numeric: true, desc: true,
              cell: (c, td) => td.textContent = `${Math.round(c.radio_class_share * 100)}%`},
             {label: "msgs", key: (c) => c.msg_count, numeric: true, desc: true,
