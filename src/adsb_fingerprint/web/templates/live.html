@@ -83,7 +83,7 @@
         const COLUMNS = [
             {label: "icao", key: (c) => c.icao,
              cell: (c, td) => td.textContent = c.icao},
-            {label: "reported reg", key: (c) => text(c.registration),
+            {label: "rep reg", key: (c) => text(c.registration),
              cell: (c, td) => td.textContent = text(c.registration)},
             {label: "pred reg", key: leaderName,
              cell: (c, td) => {
@@ -108,7 +108,7 @@
                      td.appendChild(line);
                  }
              }},
-            {label: "reported type", key: (c) => text(c.model), clip: true,
+            {label: "rep type", key: (c) => text(c.model), clip: true,
              cell: (c, td) => td.textContent = text(c.model)},
             {label: "pred type", key: (c) => text(c.radio_class), clip: true,
              cell: (c, td) => {
