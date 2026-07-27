@@ -16,13 +16,6 @@
         #fleet .line.match { color: #7fd487; }
         #fleet .line.differ { color: #e08484; }
         #fleet tr.stranger td { opacity: 0.75; }
-        #fleet .badge {
-            padding: 0 5px;
-            border-radius: 999px;
-            background: #2a2d33;
-            color: #8b93a0;
-            font-size: 11px;
-        }
         #controls {
             display: flex;
             gap: 12px;
@@ -69,7 +62,7 @@
             the nearest signatures — a registry label for the radio-fit cluster the
             waveform lands in, colored against the reported type (yellow = same model
             family by shared prefix) — and it works even for aircraft never enrolled
-            (marked new). sort by any column header.
+            (dimmed rows). sort by any column header.
         </p>
     </main>
     <script>
@@ -89,16 +82,7 @@
         // whether the default order for that key is descending.
         const COLUMNS = [
             {label: "icao", key: (c) => c.icao,
-             cell: (c, td) => {
-                 td.textContent = c.icao;
-                 if (!c.enrolled) {
-                     td.append(" ");
-                     const badge = document.createElement("span");
-                     badge.className = "badge";
-                     badge.textContent = "new";
-                     td.appendChild(badge);
-                 }
-             }},
+             cell: (c, td) => td.textContent = c.icao},
             {label: "reported reg", key: (c) => text(c.registration),
              cell: (c, td) => td.textContent = text(c.registration)},
             {label: "pred reg", key: leaderName,
@@ -165,7 +149,7 @@
             return "";
         }
 
-        let sort = {index: COLUMNS.length - 1, reverse: false};
+        let sort = {index: COLUMNS.findIndex((column) => column.label === "msgs"), reverse: true};
         let latest = null;
 
         for (const [index, column] of COLUMNS.entries()) {
