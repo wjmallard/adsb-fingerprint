@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADS-B Live ID</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        #fleet td.match { color: #7fd487; }
+        #fleet td.differ { color: #e08484; }
+        #fleet td.blank, #fleet .dim { color: #6b7280; }
+        #fleet .share { color: #8b93a0; }
+        #fleet tr.stranger td { opacity: 0.75; }
+        #fleet .badge {
+            padding: 0 5px;
+            border-radius: 999px;
+            background: #2a2d33;
+            color: #8b93a0;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <main id="fleet">
+        <h1>live identification</h1>
+        <nav class="page-nav">
+            <a href="/">live map</a>
+            <a href="/aircraft">aircraft</a>
+            <a href="/embeddings">embeddings</a>
+        </nav>
+        <p class="detail-note" id="status">
+            waiting for adsb-predict output…
+        </p>
+        <table>
+            <thead>
+                <tr>
+                    <th>radio class</th>
+                    <th>identified from waveform</th>
+                    <th>claims to be</th>
+                    <th class="num">msgs</th>
+                    <th class="num">heard</th>
+                </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+        </table>
+        <p class="detail-note">
+            each message's waveform votes for the nearest enrolled signature over the
+            last {{ minutes }} min — one name at ≥{{ (confident * 100) | int }}% of a
+            contact's votes (✓/✗ against the decoded address), a ranked shortlist at
+            ≥{{ (candidate * 100) | int }}%, an em dash when nobody clears the bar.
+            "radio class" is the registry model voted by the nearest signatures —
+            it works even for aircraft never enrolled (marked new).
+        </p>
+    </main>
+    <script>
+        const rowsEl = document.getElementById("rows");
+        const statusEl = document.getElementById("status");
+
+        function age(s) {
+            return s < 100 ? `${Math.round(s)}s` : `${Math.round(s / 60)}m`;
+        }
+
+        function cell(row, className) {
+            const td = document.createElement("td");
+            if (className) td.className = className;
+            row.appendChild(td);
+            return td;
+        }
+
+        function name(entry) {
+            return entry.registration || entry.icao;
+        }
+
+        function render(data) {
+            statusEl.textContent =
+                `${data.contacts.length} contacts in the last ${data.minutes} min · ` +
+                `${data.enrolled_total} aircraft enrolled`;
+            rowsEl.replaceChildren();
+            for (const c of data.contacts) {
+                const tr = document.createElement("tr");
+                if (!c.enrolled) tr.className = "stranger";
+
+                const klass = cell(tr, "clip");
+                klass.textContent = c.radio_class || "?";
+                const kshare = document.createElement("span");
+                kshare.className = "share";
+                kshare.textContent = ` ${Math.round(c.radio_class_share * 100)}%`;
+                klass.appendChild(kshare);
+
+                if (c.verdict) {
+                    const who = cell(tr, c.verdict === "match" ? "match" : "differ");
+                    who.textContent =
+                        `${name(c.candidates[0])} ` +
+                        `${Math.round(c.candidates[0].share * 100)}% ` +
+                        (c.verdict === "match" ? "✓" : "✗");
+                } else if (c.candidates.length) {
+                    const who = cell(tr);
+                    who.textContent = c.candidates
+                        .map((cand) => `${name(cand)} ${Math.round(cand.share * 100)}%`)
+                        .join(" · ");
+                } else {
+                    cell(tr, "blank").textContent = "—";
+                }
+
+                const claims = cell(tr, "clip");
+                claims.textContent = `${c.icao} ${c.registration || ""} ${c.model || ""}`.trim();
+                if (!c.enrolled) {
+                    claims.append(" ");
+                    const badge = document.createElement("span");
+                    badge.className = "badge";
+                    badge.textContent = "new";
+                    claims.appendChild(badge);
+                }
+
+                cell(tr, "num").textContent = c.msg_count;
+                cell(tr, "num").textContent = age(c.age_s);
+                rowsEl.appendChild(tr);
+            }
+        }
+
+        async function poll() {
+            try {
+                const response = await fetch("/api/live" + window.location.search);
+                render(await response.json());
+            } catch {
+                statusEl.textContent = "api unreachable — is adsb-web healthy?";
+            }
+        }
+
+        poll();
+        setInterval(poll, 5000);
+    </script>
+</body>
+</html>

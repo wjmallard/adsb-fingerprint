@@ -186,6 +186,48 @@ HISTORY_SQL = """
     order by captured_at
 """
 
+# /live: the identification table (adsb-predict output). A contact is an
+# aircraft heard in the window; each of its recent messages voted for a
+# nearest enrolled signature. The leading candidate names the contact
+# outright at CONFIDENT_SHARE of the votes; everything at CANDIDATE_SHARE
+# or better makes the ranked shortlist.
+LIVE_WINDOW_MINUTES = 10
+LIVE_CONFIDENT_SHARE = 0.5
+LIVE_CANDIDATE_SHARE = 0.2
+
+LIVE_SQL = """
+    select
+        m.icao,
+        extract(epoch from now() - m.captured_at) as age_s,
+        p.predicted_icao,
+        p.similarity,
+        p.predicted_type
+    from messages m
+    join predictions p on p.message_id = m.id
+    where m.captured_at > now() - %(minutes)s * interval '1 minute'
+"""
+
+SIGNATURES_SQL = """
+    select
+        icao,
+        messages
+    from signatures
+"""
+
+LIVE_REGISTRY_SQL = """
+    select
+        icao,
+        case
+            when source = 'faa' and registration is not null
+            then 'N' || registration
+            else registration
+        end as registration,
+        model,
+        type
+    from aircraft
+    where icao = any(%(icaos)s)
+"""
+
 # Range rings as ST_Buffer circles on geography (quad_segs=32 -> 129-point
 # rings), GeoJSON-encoded by PostGIS itself.
 RINGS_SQL = """
@@ -247,6 +289,118 @@ def aircraft():
         totals=totals,
         min_train=TRAIN_MIN_MESSAGES,
     )
+
+
+@app.route("/live")
+def live():
+    return render_template(
+        "live.html",
+        minutes=LIVE_WINDOW_MINUTES,
+        confident=LIVE_CONFIDENT_SHARE,
+        candidate=LIVE_CANDIDATE_SHARE,
+    )
+
+
+@app.route("/api/live")
+def api_live():
+    # Per-contact aggregation of adsb-predict's per-message votes over the
+    # window. Contacts sort newest-heard first, like the map roster.
+    minutes = request.args.get(
+        "minutes",
+        default=LIVE_WINDOW_MINUTES,
+        type=float,
+    )
+    with db.connect() as conn:
+        rows = conn.execute(LIVE_SQL, {"minutes": minutes}).fetchall()
+        enrolled = {
+            row["icao"]: row["messages"]
+            for row in conn.execute(SIGNATURES_SQL).fetchall()
+        }
+        contacts = {}
+        for row in rows:
+            contact = contacts.setdefault(
+                row["icao"],
+                {
+                    "n": 0,
+                    "age_s": row["age_s"],
+                    "votes": {},
+                    "sims": {},
+                    "types": {},
+                },
+            )
+            contact["n"] += 1
+            contact["age_s"] = min(contact["age_s"], row["age_s"])
+            contact["votes"][row["predicted_icao"]] = contact["votes"].get(row["predicted_icao"], 0) + 1
+            contact["sims"][row["predicted_icao"]] = contact["sims"].get(row["predicted_icao"], 0.0) + row["similarity"]
+            contact["types"][row["predicted_type"]] = contact["types"].get(row["predicted_type"], 0) + 1
+        wanted = set(contacts)
+        for contact in contacts.values():
+            wanted.update(contact["votes"])
+        registry = {}
+        if wanted:
+            registry = {
+                row["icao"]: row
+                for row in conn.execute(
+                    LIVE_REGISTRY_SQL,
+                    {"icaos": sorted(wanted)},
+                ).fetchall()
+            }
+
+    def describe(icao):
+        entry = registry.get(icao) or {}
+        return {
+            "icao": icao,
+            "registration": entry.get("registration"),
+            "model": entry.get("model") or entry.get("type"),
+        }
+
+    out = []
+    for icao, contact in contacts.items():
+        candidates = [
+            {
+                **describe(candidate),
+                "share": round(votes / contact["n"], 2),
+                "similarity": round(contact["sims"][candidate] / votes, 3),
+            }
+            for candidate, votes in sorted(
+                contact["votes"].items(),
+                key=lambda item: -item[1],
+            )
+            if votes / contact["n"] >= LIVE_CANDIDATE_SHARE
+        ][:3]
+        identified = (
+            candidates[0]
+            if candidates and candidates[0]["share"] >= LIVE_CONFIDENT_SHARE
+            else None
+        )
+        type_label, type_votes = max(
+            contact["types"].items(),
+            key=lambda item: item[1],
+        )
+        out.append(
+            {
+                **describe(icao),
+                "age_s": round(float(contact["age_s"]), 1),
+                "msg_count": contact["n"],
+                "enrolled": icao in enrolled,
+                "signature_msgs": enrolled.get(icao),
+                "radio_class": type_label,
+                "radio_class_share": round(type_votes / contact["n"], 2),
+                "candidates": candidates,
+                "verdict": (
+                    None
+                    if identified is None
+                    else ("match" if identified["icao"] == icao else "differ")
+                ),
+            }
+        )
+    out.sort(key=lambda contact: contact["age_s"])
+    return {
+        "contacts": out,
+        "enrolled_total": len(enrolled),
+        "minutes": minutes,
+        "now": round(time.time(), 1),
+    }
 
 
 @app.route("/embeddings")
