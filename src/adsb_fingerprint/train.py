@@ -139,6 +139,15 @@ def main():
         "sessions, ignoring any newer ones, so ablation runs stay comparable "
         "(overrides --test-sessions/--test-fraction).",
     )
+    parser.add_argument(
+        "--exclude",
+        nargs="+",
+        default=None,
+        metavar="ICAO",
+        help="ICAOs to drop from the class roster entirely (their messages are "
+        "used neither for training nor held-out scoring) — for open-set tests "
+        "where excluded airframes play the strangers.",
+    )
     parser.add_argument("--min-train", type=int, default=50, help="Min training messages per ICAO.")
     parser.add_argument("--min-test", type=int, default=10, help="Min held-out messages per ICAO.")
     parser.add_argument(
@@ -193,6 +202,9 @@ def main():
         args.min_train,
         args.min_test,
     )
+    if args.exclude:
+        excluded = set(args.exclude)
+        classes = [icao for icao in classes if icao not in excluded]
     if not classes:
         raise SystemExit(
             "no ICAO has enough messages on both sides of the split — "
