@@ -55,7 +55,9 @@
         <p class="detail-note">
             the reported columns come from the decoded address and the registry; the
             pred columns come from the waveform alone. each message votes for its nearest
-            enrolled signature over the last {{ minutes }} min — pred reg lists every
+            enrolled signature over the last {{ minutes }} min; confidences are vote
+            shares shrunk by {{ pseudo }} pseudo-votes, so one lucky message can't read
+            as 100%. pred reg lists every
             candidate at ≥{{ (candidate * 100) | int }}% of a contact's votes, colored
             when the leader clears {{ (confident * 100) | int }}% (green = agrees with the
             reported address, red = disagrees). pred type is the airframe model voted by

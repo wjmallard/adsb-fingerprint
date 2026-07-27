@@ -190,10 +190,14 @@ HISTORY_SQL = """
 # aircraft heard in the window; each of its recent messages voted for a
 # nearest enrolled signature. The leading candidate names the contact
 # outright at CONFIDENT_SHARE of the votes; everything at CANDIDATE_SHARE
-# or better makes the ranked shortlist.
+# or better makes the ranked shortlist. Shares are shrunk by PSEUDO_VOTES
+# phantom dissenters (votes / (n + PSEUDO_VOTES)) so a single-message
+# contact reads ~25%, not a unanimous 100% — confidence has to be earned
+# by accumulation, not by a small denominator.
 LIVE_WINDOW_MINUTES = 10
 LIVE_CONFIDENT_SHARE = 0.5
 LIVE_CANDIDATE_SHARE = 0.2
+LIVE_PSEUDO_VOTES = 3
 
 LIVE_SQL = """
     select
@@ -298,6 +302,7 @@ def live():
         minutes=LIVE_WINDOW_MINUTES,
         confident=LIVE_CONFIDENT_SHARE,
         candidate=LIVE_CANDIDATE_SHARE,
+        pseudo=LIVE_PSEUDO_VOTES,
     )
 
 
@@ -356,17 +361,18 @@ def api_live():
 
     out = []
     for icao, contact in contacts.items():
+        denominator = contact["n"] + LIVE_PSEUDO_VOTES
         candidates = [
             {
                 **describe(candidate),
-                "share": round(votes / contact["n"], 2),
+                "share": round(votes / denominator, 2),
                 "similarity": round(contact["sims"][candidate] / votes, 3),
             }
             for candidate, votes in sorted(
                 contact["votes"].items(),
                 key=lambda item: -item[1],
             )
-            if votes / contact["n"] >= LIVE_CANDIDATE_SHARE
+            if votes / denominator >= LIVE_CANDIDATE_SHARE
         ][:3]
         identified = (
             candidates[0]
@@ -385,7 +391,7 @@ def api_live():
                 "enrolled": icao in enrolled,
                 "signature_msgs": enrolled.get(icao),
                 "radio_class": type_label,
-                "radio_class_share": round(type_votes / contact["n"], 2),
+                "radio_class_share": round(type_votes / denominator, 2),
                 "candidates": candidates,
                 "verdict": (
                     None
