@@ -7,10 +7,13 @@
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/css/style.css">
     <style>
+        #fleet td { vertical-align: top; }
         #fleet td.match { color: #7fd487; }
         #fleet td.differ { color: #e08484; }
         #fleet td.blank, #fleet .dim { color: #6b7280; }
-        #fleet .share { color: #8b93a0; }
+        #fleet .line { white-space: nowrap; }
+        #fleet .line.match { color: #7fd487; }
+        #fleet .line.differ { color: #e08484; }
         #fleet tr.stranger td { opacity: 0.75; }
         #fleet .badge {
             padding: 0 5px;
@@ -19,6 +22,21 @@
             color: #8b93a0;
             font-size: 11px;
         }
+        #controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin: 0 0 8px;
+        }
+        #controls button {
+            background: #2a2d33;
+            color: #c8cdd4;
+            border: 1px solid #3a3e46;
+            border-radius: 4px;
+            padding: 2px 10px;
+            cursor: pointer;
+        }
+        #controls button:hover { background: #34383f; }
     </style>
 </head>
 <body>
@@ -29,107 +47,175 @@
             <a href="/aircraft">aircraft</a>
             <a href="/embeddings">embeddings</a>
         </nav>
-        <p class="detail-note" id="status">
-            waiting for adsb-predict output…
-        </p>
+        <div id="controls">
+            <label><input type="checkbox" id="follow" checked> live updates</label>
+            <button id="refresh">update</button>
+            <span class="detail-note" id="status">waiting for adsb-predict output…</span>
+        </div>
         <table>
             <thead>
-                <tr>
-                    <th>radio class</th>
-                    <th>identified from waveform</th>
-                    <th>claims to be</th>
-                    <th class="num">msgs</th>
-                    <th class="num">heard</th>
-                </tr>
+                <tr id="head"></tr>
             </thead>
             <tbody id="rows"></tbody>
         </table>
         <p class="detail-note">
-            each message's waveform votes for the nearest enrolled signature over the
-            last {{ minutes }} min — one name at ≥{{ (confident * 100) | int }}% of a
-            contact's votes (✓/✗ against the decoded address), a ranked shortlist at
-            ≥{{ (candidate * 100) | int }}%, an em dash when nobody clears the bar.
-            "radio class" is the registry model voted by the nearest signatures —
-            it works even for aircraft never enrolled (marked new).
+            reported columns come from the decoded address and the registry; predicted
+            columns come from the waveform alone. each message votes for its nearest
+            enrolled signature over the last {{ minutes }} min — predicted ids list every
+            candidate at ≥{{ (candidate * 100) | int }}% of a contact's votes, colored
+            when the leader clears {{ (confident * 100) | int }}% (green = agrees with the
+            reported address, red = disagrees). predicted radio is the registry model
+            voted by the nearest signatures — it works even for aircraft never enrolled
+            (marked new). sort by any column header.
         </p>
     </main>
     <script>
+        const headEl = document.getElementById("head");
         const rowsEl = document.getElementById("rows");
         const statusEl = document.getElementById("status");
+        const followEl = document.getElementById("follow");
+        const refreshEl = document.getElementById("refresh");
 
-        function age(s) {
-            return s < 100 ? `${Math.round(s)}s` : `${Math.round(s / 60)}m`;
+        const CONFIDENT = {{ confident }};
+        const text = (c) => c ?? "";
+        const name = (entry) => entry.registration || entry.icao;
+        const leaderShare = (c) => (c.candidates.length ? c.candidates[0].share : -1);
+        const leaderName = (c) => (c.candidates.length ? name(c.candidates[0]) : "");
+
+        // One entry per column: header label, cell builder, sort key, and
+        // whether the default order for that key is descending.
+        const COLUMNS = [
+            {label: "reported icao", key: (c) => c.icao,
+             cell: (c, td) => {
+                 td.textContent = c.icao;
+                 if (!c.enrolled) {
+                     td.append(" ");
+                     const badge = document.createElement("span");
+                     badge.className = "badge";
+                     badge.textContent = "new";
+                     td.appendChild(badge);
+                 }
+             }},
+            {label: "reported id", key: (c) => text(c.registration),
+             cell: (c, td) => td.textContent = text(c.registration)},
+            {label: "reported radio", key: (c) => text(c.model), clip: true,
+             cell: (c, td) => td.textContent = text(c.model)},
+            {label: "predicted radio", key: (c) => text(c.radio_class), clip: true,
+             cell: (c, td) => td.textContent = text(c.radio_class) || "?"},
+            {label: "conf", key: (c) => c.radio_class_share, numeric: true, desc: true,
+             cell: (c, td) => td.textContent = `${Math.round(c.radio_class_share * 100)}%`},
+            {label: "predicted ids", key: leaderName,
+             cell: (c, td) => {
+                 if (!c.candidates.length) {
+                     td.textContent = "—";
+                     td.className = "blank";
+                     return;
+                 }
+                 for (const [i, cand] of c.candidates.entries()) {
+                     const line = document.createElement("div");
+                     line.className = "line" + lineClass(c, cand, i);
+                     line.textContent = name(cand) + mark(c, cand, i);
+                     td.appendChild(line);
+                 }
+             }},
+            {label: "confs", key: leaderShare, numeric: true, desc: true,
+             cell: (c, td) => {
+                 for (const [i, cand] of c.candidates.entries()) {
+                     const line = document.createElement("div");
+                     line.className = "line num" + lineClass(c, cand, i);
+                     line.textContent = `${Math.round(cand.share * 100)}%`;
+                     td.appendChild(line);
+                 }
+             }},
+            {label: "msgs", key: (c) => c.msg_count, numeric: true, desc: true,
+             cell: (c, td) => td.textContent = c.msg_count},
+            {label: "heard", key: (c) => c.age_s, numeric: true,
+             cell: (c, td) => td.textContent = c.age_s < 100
+                 ? `${Math.round(c.age_s)}s`
+                 : `${Math.round(c.age_s / 60)}m`},
+        ];
+
+        function lineClass(contact, candidate, i) {
+            if (candidate.icao === contact.icao) return " match";
+            if (i === 0 && candidate.share >= CONFIDENT) return " differ";
+            return "";
         }
 
-        function cell(row, className) {
-            const td = document.createElement("td");
-            if (className) td.className = className;
-            row.appendChild(td);
-            return td;
+        function mark(contact, candidate, i) {
+            if (i > 0 || candidate.share < CONFIDENT) return "";
+            return candidate.icao === contact.icao ? " ✓" : " ✗";
         }
 
-        function name(entry) {
-            return entry.registration || entry.icao;
+        let sort = {index: COLUMNS.length - 1, reverse: false};
+        let latest = null;
+
+        for (const [index, column] of COLUMNS.entries()) {
+            const th = document.createElement("th");
+            if (column.numeric) th.className = "num";
+            const link = document.createElement("a");
+            link.href = "#";
+            link.textContent = column.label;
+            link.onclick = (event) => {
+                event.preventDefault();
+                sort = {
+                    index,
+                    reverse: sort.index === index
+                        ? !sort.reverse
+                        : Boolean(column.desc),
+                };
+                render();
+            };
+            th.appendChild(link);
+            headEl.appendChild(th);
         }
 
-        function render(data) {
-            statusEl.textContent =
-                `${data.contacts.length} contacts in the last ${data.minutes} min · ` +
-                `${data.enrolled_total} aircraft enrolled`;
+        function render() {
+            if (!latest) return;
+            const column = COLUMNS[sort.index];
+            for (const [index, th] of [...headEl.children].entries()) {
+                th.firstChild.className = index === sort.index ? "sorted" : "";
+            }
+            const contacts = [...latest.contacts].sort((a, b) => {
+                const ka = column.key(a);
+                const kb = column.key(b);
+                const order = column.numeric
+                    ? ka - kb
+                    : String(ka).localeCompare(String(kb)) || 0;
+                return (sort.reverse ? -order : order) || a.icao.localeCompare(b.icao);
+            });
             rowsEl.replaceChildren();
-            for (const c of data.contacts) {
+            for (const contact of contacts) {
                 const tr = document.createElement("tr");
-                if (!c.enrolled) tr.className = "stranger";
-
-                const klass = cell(tr, "clip");
-                klass.textContent = c.radio_class || "?";
-                const kshare = document.createElement("span");
-                kshare.className = "share";
-                kshare.textContent = ` ${Math.round(c.radio_class_share * 100)}%`;
-                klass.appendChild(kshare);
-
-                if (c.verdict) {
-                    const who = cell(tr, c.verdict === "match" ? "match" : "differ");
-                    who.textContent =
-                        `${name(c.candidates[0])} ` +
-                        `${Math.round(c.candidates[0].share * 100)}% ` +
-                        (c.verdict === "match" ? "✓" : "✗");
-                } else if (c.candidates.length) {
-                    const who = cell(tr);
-                    who.textContent = c.candidates
-                        .map((cand) => `${name(cand)} ${Math.round(cand.share * 100)}%`)
-                        .join(" · ");
-                } else {
-                    cell(tr, "blank").textContent = "—";
+                if (!contact.enrolled) tr.className = "stranger";
+                for (const column of COLUMNS) {
+                    const td = document.createElement("td");
+                    if (column.numeric) td.className = "num";
+                    if (column.clip) td.classList.add("clip");
+                    column.cell(contact, td);
+                    tr.appendChild(td);
                 }
-
-                const claims = cell(tr, "clip");
-                claims.textContent = `${c.icao} ${c.registration || ""} ${c.model || ""}`.trim();
-                if (!c.enrolled) {
-                    claims.append(" ");
-                    const badge = document.createElement("span");
-                    badge.className = "badge";
-                    badge.textContent = "new";
-                    claims.appendChild(badge);
-                }
-
-                cell(tr, "num").textContent = c.msg_count;
-                cell(tr, "num").textContent = age(c.age_s);
                 rowsEl.appendChild(tr);
             }
+            statusEl.textContent =
+                `${latest.contacts.length} contacts in the last ${latest.minutes} min · ` +
+                `${latest.enrolled_total} aircraft enrolled · ` +
+                `updated ${latest.fetched}`;
         }
 
         async function poll() {
             try {
                 const response = await fetch("/api/live" + window.location.search);
-                render(await response.json());
+                latest = await response.json();
+                latest.fetched = new Date().toLocaleTimeString();
+                render();
             } catch {
                 statusEl.textContent = "api unreachable — is adsb-web healthy?";
             }
         }
 
+        refreshEl.onclick = poll;
         poll();
-        setInterval(poll, 5000);
+        setInterval(() => { if (followEl.checked) poll(); }, 5000);
     </script>
 </body>
 </html>
