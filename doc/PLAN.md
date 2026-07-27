@@ -29,7 +29,7 @@ Tiers 1 and 3 need calibrated distances in embedding space rather than a
 closed-set softmax; the evals they imply are genuine-vs-impostor ROC and
 held-out-airframe (open-set) tests.
 
-## The honest caveat (read first)
+## The channel confound
 
 We cannot control aircraft geometry, so the easy signal correlated with ICAO is
 the propagation channel (range / SNR / multipath / Doppler), not transponder
@@ -47,7 +47,7 @@ detector. The experimental design below exists to disprove that; treat a clean
 Consequence: each example is ~288 IQ samples. We drop the patent's second
 (long-signal subsequence) stage and keep one rescaled stack.
 
-## Storage (filesystem is truth, Postgres is a rebuildable index)
+## Storage
 
 - `data/captures/*.cf32` — raw interleaved float32 IQ. Source of truth.
 - Postgres `messages` — one row per detected message (icao, capture_file,
@@ -71,7 +71,7 @@ Consequence: each example is ~288 IQ samples. We drop the patent's second
 - Sum skips -> ReLU -> conv+avgpool -> dense -> softmax(N ICAOs).
 - Receptive field 1 + 3*sum(d): 5 blocks ~= 187 samples; +dilation-64 ~= 379 (covers 288).
 
-## Experimental design (not fooling ourselves)
+## Experimental design
 
 1. Split by session/time, never random. Train on some sessions, test on the same
    ICAOs in held-out sessions (different geometry). Survival = hardware.

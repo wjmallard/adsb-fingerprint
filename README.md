@@ -19,7 +19,7 @@ airframe with the ID bits masked out, across receive geometries.
 recently-heard roster, and a registry-joined detail panel (here an EVA Air
 777 over the South Bay). Receiver shown at the example-config placeholder.*
 
-## The honest caveat (read first)
+## The channel confound
 
 A fixed receiver cannot control aircraft geometry, so the easiest signal
 correlated with ICAO is the propagation channel — range, SNR, multipath,
