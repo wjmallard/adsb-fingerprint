@@ -60,34 +60,11 @@ class GDCCBlock(nn.Module):
         return x + self.residual(gated), self.skip(gated)
 
 
-class CosineHead(nn.Module):
-    """Bias-free classifier whose logits are cosine similarities.
-
-    Both the embedding and the per-class weight vectors are L2-normalized,
-    so each class collapses to a direction and a logit is cos(angle to it).
-    Used with a margin loss so distance in embedding space is trained to
-    mean identity — a plain linear head only has to rank classes, which
-    leaves strangers indistinguishable from enrolled aircraft.
-    """
-
-    def __init__(self, in_features, n_classes):
-        super().__init__()
-        self.weight = nn.Parameter(torch.empty(n_classes, in_features))
-        nn.init.xavier_uniform_(self.weight)
-
-    def forward(self, x):
-        return F.linear(
-            F.normalize(x, dim=1),
-            F.normalize(self.weight, dim=1),
-        )
-
-
 class ADCC(nn.Module):
     """Dilated-causal-conv classifier over (batch, 2, time) IQ windows.
 
     Causal input conv -> GDCC blocks with doubling dilations -> summed
-    skips -> 1x1 conv -> global average pool over time -> linear logits
-    (or cosine-similarity logits with classify="cosine").
+    skips -> 1x1 conv -> global average pool over time -> linear logits.
     """
 
     def __init__(
@@ -98,7 +75,6 @@ class ADCC(nn.Module):
         skip_channels=48,
         kernel_size=4,
         dilations=(2, 4, 8, 16, 32, 64),
-        classify="linear",
     ):
         super().__init__()
         self.kernel_size = kernel_size
@@ -109,12 +85,7 @@ class ADCC(nn.Module):
             for dilation in self.dilations
         )
         self.head = nn.Conv1d(skip_channels, skip_channels, 1)
-        if classify == "linear":
-            self.classify = nn.Linear(skip_channels, n_classes)
-        elif classify == "cosine":
-            self.classify = CosineHead(skip_channels, n_classes)
-        else:
-            raise ValueError(f"unknown classifier: {classify!r}")
+        self.classify = nn.Linear(skip_channels, n_classes)
 
     def receptive_field(self):
         """Input samples the final output position can see."""

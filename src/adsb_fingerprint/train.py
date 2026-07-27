@@ -121,27 +121,6 @@ def main():
         help="Ablation view of the IQ (default: whole message).",
     )
     parser.add_argument(
-        "--loss",
-        choices=("softmax", "margin"),
-        default="softmax",
-        help="Training objective: plain softmax cross-entropy, or an additive "
-        "cosine margin (AM-softmax) on a weight-normalized head — the margin "
-        "packs each class tight around a direction so embedding distance "
-        "becomes meaningful for open-set (stranger) gating.",
-    )
-    parser.add_argument(
-        "--margin",
-        type=float,
-        default=0.2,
-        help="Cosine margin m for --loss margin.",
-    )
-    parser.add_argument(
-        "--scale",
-        type=float,
-        default=30.0,
-        help="Logit scale s for --loss margin.",
-    )
-    parser.add_argument(
         "--test-sessions",
         nargs="+",
         default=None,
@@ -268,17 +247,13 @@ def main():
         "skip_channels": 48,
         "kernel_size": 4,
         "dilations": [2, 4, 8, 16, 32, 64],
-        "classify": "cosine" if args.loss == "margin" else "linear",
     }
     model = ADCC(**model_kwargs).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     n_params = sum(p.numel() for p in model.parameters())
 
     started = datetime.now(timezone.utc)
-    run_name = f"{started.strftime('%Y%m%dT%H%M%SZ')}-{args.variant}"
-    if args.loss != "softmax":
-        run_name += f"-{args.loss}"
-    run_dir = config.MODEL_DIR / run_name
+    run_dir = config.MODEL_DIR / f"{started.strftime('%Y%m%dT%H%M%SZ')}-{args.variant}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"variant  : {args.variant}")
@@ -342,13 +317,10 @@ def main():
         ):
             batch = perm[lo : lo + args.batch_size]
             optimizer.zero_grad()
-            logits = model(x_train[batch].to(device))
-            y = y_train[batch].to(device)
-            if args.loss == "margin":
-                logits = args.scale * (
-                    logits - args.margin * F.one_hot(y, len(classes))
-                )
-            loss = F.cross_entropy(logits, y)
+            loss = F.cross_entropy(
+                model(x_train[batch].to(device)),
+                y_train[batch].to(device),
+            )
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * len(batch)
