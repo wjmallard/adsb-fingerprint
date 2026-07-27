@@ -13,6 +13,22 @@ Capture Mode S extended squitters, label each burst by its 24-bit ICAO address
 fingerprint — then test whether that survives with the ID bits masked and,
 crucially, across different receive geometries.
 
+The operational question — given IQ from an unidentified transmitter — comes
+in tiers, each with a confidence attached:
+
+1. **Verify**: it claims ICAO X; does the waveform match X's enrolled
+   fingerprint? (1-vs-1, the anti-spoof check.)
+2. **Identify**: which enrolled airframe is this? (1-of-N — what the
+   classifier does today.)
+3. **Fall back to type/operator**: if it matches no enrolled airframe, what
+   kind is it and whose fleet does its embedding neighborhood suggest?
+   Same-fleet confusion (sibling A320s, flight-school 172s) is the answer at
+   this tier, not a failure.
+
+Tiers 1 and 3 need calibrated distances in embedding space rather than a
+closed-set softmax; the evals they imply are genuine-vs-impostor ROC and
+held-out-airframe (open-set) tests.
+
 ## The honest caveat (read first)
 
 We cannot control aircraft geometry, so the easy signal correlated with ICAO is
