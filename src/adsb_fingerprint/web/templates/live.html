@@ -59,14 +59,15 @@
             <tbody id="rows"></tbody>
         </table>
         <p class="detail-note">
-            reported columns come from the decoded address and the registry; predicted
+            icao / reg / type come from the decoded address and the registry; the pred
             columns come from the waveform alone. each message votes for its nearest
-            enrolled signature over the last {{ minutes }} min — predicted ids list every
+            enrolled signature over the last {{ minutes }} min — pred reg lists every
             candidate at ≥{{ (candidate * 100) | int }}% of a contact's votes, colored
             when the leader clears {{ (confident * 100) | int }}% (green = agrees with the
-            reported address, red = disagrees). predicted radio is the registry model
-            voted by the nearest signatures — it works even for aircraft never enrolled
-            (marked new). sort by any column header.
+            reported address, red = disagrees). pred type is the airframe model voted by
+            the nearest signatures — a registry label for the radio-fit cluster the
+            waveform lands in, and it works even for aircraft never enrolled (marked
+            new). sort by any column header.
         </p>
     </main>
     <script>
@@ -85,7 +86,7 @@
         // One entry per column: header label, cell builder, sort key, and
         // whether the default order for that key is descending.
         const COLUMNS = [
-            {label: "reported icao", key: (c) => c.icao,
+            {label: "icao", key: (c) => c.icao,
              cell: (c, td) => {
                  td.textContent = c.icao;
                  if (!c.enrolled) {
@@ -96,9 +97,9 @@
                      td.appendChild(badge);
                  }
              }},
-            {label: "reported id", key: (c) => text(c.registration),
+            {label: "reg", key: (c) => text(c.registration),
              cell: (c, td) => td.textContent = text(c.registration)},
-            {label: "predicted ids", key: leaderName,
+            {label: "pred reg", key: leaderName,
              cell: (c, td) => {
                  if (!c.candidates.length) {
                      td.textContent = "—";
@@ -121,9 +122,9 @@
                      td.appendChild(line);
                  }
              }},
-            {label: "reported radio", key: (c) => text(c.model), clip: true,
+            {label: "type", key: (c) => text(c.model), clip: true,
              cell: (c, td) => td.textContent = text(c.model)},
-            {label: "predicted radio", key: (c) => text(c.radio_class), clip: true,
+            {label: "pred type", key: (c) => text(c.radio_class), clip: true,
              cell: (c, td) => td.textContent = text(c.radio_class) || "?"},
             {label: "conf", key: (c) => c.radio_class_share, numeric: true, desc: true,
              cell: (c, td) => td.textContent = `${Math.round(c.radio_class_share * 100)}%`},
