@@ -111,7 +111,7 @@
                  for (const [i, cand] of c.candidates.entries()) {
                      const line = document.createElement("div");
                      line.className = "line" + lineClass(c, cand, i);
-                     line.textContent = name(cand) + mark(c, cand, i);
+                     line.textContent = name(cand);
                      td.appendChild(line);
                  }
              }},
@@ -163,11 +163,6 @@
             if (candidate.icao === contact.icao) return " match";
             if (i === 0 && candidate.share >= CONFIDENT) return " differ";
             return "";
-        }
-
-        function mark(contact, candidate, i) {
-            if (i > 0 || candidate.share < CONFIDENT) return "";
-            return candidate.icao === contact.icao ? " ✓" : " ✗";
         }
 
         let sort = {index: COLUMNS.length - 1, reverse: false};
