@@ -29,6 +29,9 @@
             {% else %}
             <span class="run-name muted">{{ run.name }}</span>
             {% endif %}
+            {% if run.has_held_out %}
+            <a class="run-meta" href="/embeddings/{{ run.name }}/held-out">held-out view</a>
+            {% endif %}
             <span class="run-meta">
                 {%- if run.variant %}{{ run.variant }}{% endif %}
                 {%- if run.n_classes %} · {{ run.n_classes }} classes{% endif %}

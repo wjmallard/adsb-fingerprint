@@ -420,15 +420,17 @@ def embeddings():
 
 
 @app.route("/embeddings/<run>")
-def embedding_viewer(run):
+@app.route("/embeddings/<run>/held-out", defaults={"scope": "held-out"})
+def embedding_viewer(run, scope=None):
     # The run segment is validated against the actual directory listing —
-    # no path arithmetic on user input.
+    # no path arithmetic on user input; the scope maps to a fixed filename.
     if not config.MODEL_DIR.is_dir():
         abort(404)
     run_dirs = {d.name for d in config.MODEL_DIR.iterdir() if d.is_dir()}
     if run not in run_dirs:
         abort(404)
-    viewer = config.MODEL_DIR / run / "embedding.html"
+    name = "embedding-held-out.html" if scope == "held-out" else "embedding.html"
+    viewer = config.MODEL_DIR / run / name
     if not viewer.is_file():
         abort(404)
     return send_file(viewer, conditional=True)
@@ -445,6 +447,7 @@ def embedding_runs():
         summary = {
             "name": run_dir.name,
             "has_viewer": (run_dir / "embedding.html").is_file(),
+            "has_held_out": (run_dir / "embedding-held-out.html").is_file(),
             "variant": None,
             "n_classes": None,
             "epochs": None,

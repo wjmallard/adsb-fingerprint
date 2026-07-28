@@ -7,7 +7,8 @@ diagnostic; swap back when numba catches up.)
 Runs a trained run's model over its own session universe (or, with
 --everything, the whole corpus; or, with --held-out, only the held-out
 sessions), takes the pooled penultimate-layer embedding per message, and
-writes two artifacts into the run directory:
+writes two artifacts into the run directory (--held-out writes them as
+embedding-held-out.* so both pictures of a run can coexist):
 
   embedding.npz   — 48-dim embeddings, 2-D projected coords, and per-
                     message metadata (icao, session, split, prediction,
@@ -185,9 +186,11 @@ def main():
         random_state=args.seed,
     ).fit_transform(embeddings.astype(np.float64))
 
+    # The held-out picture lives beside the full viewer, never over it.
+    stem = "embedding-held-out" if args.held_out else "embedding"
     times = np.array([t.strftime("%m-%d %H:%MZ") for t in data["captured_at"][index]])
     np.savez_compressed(
-        run_dir / "embedding.npz",
+        run_dir / f"{stem}.npz",
         xy=xy.astype(np.float32),
         embedding=embeddings.astype(np.float32),
         icao=icaos,
@@ -231,15 +234,16 @@ def main():
         "rs": [round(float(v), 1) if np.isfinite(v) else None for v in rssi.tolist()],
         "tm": times.tolist(),
     }
-    html = _TEMPLATE.replace("__TITLE__", f"{run_dir.name} · embedding").replace(
+    title = f"{run_dir.name} · embedding" + (" · held-out" if args.held_out else "")
+    html = _TEMPLATE.replace("__TITLE__", title).replace(
         "__DATA__",
         json.dumps(payload, separators=(",", ":")),
     )
-    (run_dir / "embedding.html").write_text(html)
+    (run_dir / f"{stem}.html").write_text(html)
 
     print(f"embedded {len(index)} messages ({', '.join(f'{(split == s).sum()} {name}' for s, name in enumerate(SPLITS) if (split == s).any())})")
-    print(f"  {run_dir / 'embedding.npz'}")
-    print(f"  {run_dir / 'embedding.html'}")
+    print(f"  {run_dir / f'{stem}.npz'}")
+    print(f"  {run_dir / f'{stem}.html'}")
 
 
 _TEMPLATE = """<!doctype html>
