@@ -29,16 +29,22 @@ AIRCRAFT_SQL = """
     with latest as (
         select
             icao,
-            count(*) as msg_count,
-            extract(epoch from now() - max(captured_at)) as age_s,
-            (array_agg(callsign order by captured_at desc) filter (where callsign is not null))[1] as callsign,
-            (array_agg(latitude order by captured_at desc) filter (where latitude is not null))[1] as latitude,
-            (array_agg(longitude order by captured_at desc) filter (where longitude is not null))[1] as longitude,
-            (array_agg(altitude_ft order by captured_at desc) filter (where altitude_ft is not null))[1] as altitude_ft,
-            (array_agg(ground_speed order by captured_at desc) filter (where ground_speed is not null))[1] as ground_speed,
-            (array_agg(track order by captured_at desc) filter (where track is not null))[1] as track,
-            (array_agg(vertical_rate order by captured_at desc) filter (where vertical_rate is not null))[1] as vertical_rate,
-            (array_agg(rssi_db order by captured_at desc) filter (where rssi_db is not null))[1] as rssi_db
+            extract(epoch from now() - last_seen) as age_s,
+            callsign,
+            latitude,
+            longitude,
+            altitude_ft,
+            ground_speed,
+            track,
+            vertical_rate,
+            rssi_db
+        from live_state
+        where last_seen > now() - %(minutes)s * interval '1 minute'
+    ),
+    stored as (
+        select
+            icao,
+            count(*) as msg_count
         from messages
         where captured_at > now() - %(minutes)s * interval '1 minute'
         and crc_ok
@@ -47,6 +53,7 @@ AIRCRAFT_SQL = """
     )
     select
         latest.*,
+        coalesce(stored.msg_count, 0) as msg_count,
         faa_aircraft.type_aircraft,
         opensky_aircraft.icao_class,
         st_distance(
@@ -60,6 +67,7 @@ AIRCRAFT_SQL = """
             )
         ) as bearing_deg
     from latest
+    left join stored on stored.icao = latest.icao
     left join faa_aircraft on faa_aircraft.icao = latest.icao
     left join opensky_aircraft on opensky_aircraft.icao = latest.icao
     order by age_s
