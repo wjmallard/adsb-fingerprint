@@ -5,8 +5,9 @@ wheels yet — sklearn's Barnes-Hut t-SNE gives the same cluster-structure
 diagnostic; swap back when numba catches up.)
 
 Runs a trained run's model over its own session universe (or, with
---everything, the whole corpus), takes the pooled penultimate-layer
-embedding per message, and writes two artifacts into the run directory:
+--everything, the whole corpus; or, with --held-out, only the held-out
+sessions), takes the pooled penultimate-layer embedding per message, and
+writes two artifacts into the run directory:
 
   embedding.npz   — 48-dim embeddings, 2-D projected coords, and per-
                     message metadata (icao, session, split, prediction,
@@ -108,11 +109,18 @@ def main():
         default="best",
         help="Which checkpoint to embed with.",
     )
-    parser.add_argument(
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
         "--everything",
         action="store_true",
         help="Embed every indexed message (all sessions, all aircraft), "
         "not just the checkpoint's train/test universe.",
+    )
+    scope.add_argument(
+        "--held-out",
+        action="store_true",
+        help="Embed only the held-out sessions, including aircraft the model "
+        "never trained on: the picture of one unseen stretch of sky.",
     )
     parser.add_argument("--batch-size", type=int, default=512, help="Embedding batch size.")
     parser.add_argument("--perplexity", type=float, default=30.0, help="t-SNE perplexity.")
@@ -132,7 +140,12 @@ def main():
     in_class = np.isin(data["icao"], classes)
     split[in_class & np.isin(data["session"], ckpt["train_sessions"])] = 0
     split[in_class & np.isin(data["session"], ckpt["test_sessions"])] = 1
-    keep = np.ones(len(split), bool) if args.everything else split < 2
+    if args.everything:
+        keep = np.ones(len(split), bool)
+    elif args.held_out:
+        keep = np.isin(data["session"], ckpt["test_sessions"])
+    else:
+        keep = split < 2
     index = np.where(keep)[0]
     if not len(index):
         raise SystemExit("nothing to embed")
