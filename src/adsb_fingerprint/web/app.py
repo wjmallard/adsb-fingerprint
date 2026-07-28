@@ -56,6 +56,7 @@ AIRCRAFT_SQL = """
         coalesce(stored.msg_count, 0) as msg_count,
         faa_aircraft.type_aircraft,
         opensky_aircraft.icao_class,
+        coalesce(faa_aircraft.manufacturer, opensky_aircraft.manufacturer) as manufacturer,
         st_distance(
             st_setsrid(st_makepoint(longitude, latitude), 4326)::geography,
             st_setsrid(st_makepoint(%(receiver_lon)s, %(receiver_lat)s), 4326)::geography
@@ -494,13 +495,18 @@ def tiles(filename):
     return send_file(config.MAP_TILES_PATH, conditional=True)
 
 
-def glyph_for(faa_type, icao_class):
+def glyph_for(faa_type, icao_class, manufacturer):
     """Map-symbol class for an airframe. FAA is authoritative when present
     (OpenSky has junk rows — e.g. a 737-9 classed H2T); OpenSky's leading
-    ICAO-class letter fills the gaps for foreign registrations."""
+    ICAO-class letter fills the gaps for foreign registrations; and when
+    both class fields are empty (registrations newer than the FAA snapshot,
+    e.g. N1984S), a manufacturer that calls itself a helicopter maker —
+    Airbus Helicopters, Bell Helicopter, Robinson Helicopter — settles it."""
     if faa_type:
         return "heli" if faa_type in ("Rotorcraft", "Gyroplane") else "plane"
     if icao_class and icao_class.startswith(("H", "G")):
+        return "heli"
+    if manufacturer and "helicopter" in manufacturer.lower():
         return "heli"
     return "plane"
 
@@ -545,7 +551,11 @@ def api_aircraft():
                 "properties": {
                     "icao": row["icao"],
                     "callsign": row["callsign"],
-                    "glyph": glyph_for(row["type_aircraft"], row["icao_class"]),
+                    "glyph": glyph_for(
+                        row["type_aircraft"],
+                        row["icao_class"],
+                        row["manufacturer"],
+                    ),
                     "age_s": round(float(row["age_s"]), 1),
                     "msg_count": row["msg_count"],
                     "altitude_ft": row["altitude_ft"],
