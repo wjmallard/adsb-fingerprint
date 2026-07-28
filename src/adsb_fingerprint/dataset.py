@@ -148,9 +148,10 @@ def _makers(icaos):
     The FAA/OpenSky manufacturer field spells one brand many ways ("AIRBUS",
     "Airbus Industrie", "AIRBUS S A S", "EMBRAER-EMPRESA BRASILEIRA DE"), so
     the leading word — split on spaces, hyphens and slashes, title-cased —
-    collapses them without inventing a taxonomy. Corporate parentage is left
-    alone: the registry's own answer stands, so Textron-built Cessnas group
-    under whichever name their registration actually carries.
+    collapses them without inventing a taxonomy. A leading article is skipped
+    first ("The Boeing Company" is a Boeing, not a The). Corporate parentage
+    is left alone: the registry's own answer stands, so Textron-built Cessnas
+    group under whichever name their registration actually carries.
     """
     with db.connect() as conn:
         rows = conn.execute(
@@ -166,6 +167,8 @@ def _makers(icaos):
     makers = {}
     for row in rows:
         words = re.split(r"[\s\-/]+", (row["manufacturer"] or "").strip())
+        if words and words[0].lower() == "the":
+            words = words[1:]
         if words and words[0]:
             makers[row["icao"]] = words[0].title()
     return makers
