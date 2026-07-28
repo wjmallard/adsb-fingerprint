@@ -65,6 +65,95 @@ COPY_SQL = """
     from stdin
 """
 
+# Every decoded message — capped or not — refreshes live_state, so the
+# coalesces keep a field's last known value when this flush has none, and
+# msg_heard accumulates across flushes and collector restarts.
+STATE_UPSERT_SQL = """
+    insert into live_state (
+        icao,
+        last_seen,
+        msg_heard,
+        rssi_db,
+        callsign,
+        callsign_at,
+        latitude,
+        longitude,
+        altitude_ft,
+        position_at,
+        ground_speed,
+        track,
+        vertical_rate,
+        velocity_at
+    )
+    values (
+        %(icao)s,
+        %(last_seen)s,
+        %(msg_heard)s,
+        %(rssi_db)s,
+        %(callsign)s,
+        %(callsign_at)s,
+        %(latitude)s,
+        %(longitude)s,
+        %(altitude_ft)s,
+        %(position_at)s,
+        %(ground_speed)s,
+        %(track)s,
+        %(vertical_rate)s,
+        %(velocity_at)s
+    )
+    on conflict (icao) do update set
+        last_seen = excluded.last_seen,
+        msg_heard = live_state.msg_heard + excluded.msg_heard,
+        rssi_db = excluded.rssi_db,
+        callsign = coalesce(excluded.callsign, live_state.callsign),
+        callsign_at = coalesce(excluded.callsign_at, live_state.callsign_at),
+        latitude = coalesce(excluded.latitude, live_state.latitude),
+        longitude = coalesce(excluded.longitude, live_state.longitude),
+        altitude_ft = coalesce(excluded.altitude_ft, live_state.altitude_ft),
+        position_at = coalesce(excluded.position_at, live_state.position_at),
+        ground_speed = coalesce(excluded.ground_speed, live_state.ground_speed),
+        track = coalesce(excluded.track, live_state.track),
+        vertical_rate = coalesce(excluded.vertical_rate, live_state.vertical_rate),
+        velocity_at = coalesce(excluded.velocity_at, live_state.velocity_at)
+"""
+
+STATE_FIELDS = (
+    "rssi_db",
+    "callsign",
+    "callsign_at",
+    "latitude",
+    "longitude",
+    "altitude_ft",
+    "position_at",
+    "ground_speed",
+    "track",
+    "vertical_rate",
+    "velocity_at",
+)
+
+
+def track_state(state, dirty, icao, stamp, msg):
+    """Fold one decoded message into the per-airframe latest-state buffer."""
+    entry = state.setdefault(icao, {"msg_heard": 0})
+    entry["msg_heard"] += 1
+    entry["last_seen"] = stamp
+    entry["rssi_db"] = msg["rssi_db"]
+    if msg.get("callsign"):
+        entry["callsign"] = msg["callsign"]
+        entry["callsign_at"] = stamp
+    if msg.get("latitude") is not None:
+        entry["latitude"] = msg["latitude"]
+        entry["longitude"] = msg["longitude"]
+        entry["position_at"] = stamp
+    if msg.get("altitude_ft") is not None:
+        entry["altitude_ft"] = msg["altitude_ft"]
+    if msg.get("ground_speed") is not None or msg.get("vertical_rate") is not None:
+        for key in ("ground_speed", "track", "vertical_rate"):
+            if msg.get(key) is not None:
+                entry[key] = msg[key]
+        entry["velocity_at"] = stamp
+    dirty.add(icao)
+
 
 def _reader(device, block_queue, stop, stats):
     while not stop.is_set():
@@ -178,6 +267,8 @@ def collect(
     current_bucket = -1
     snips = []
     rows = []
+    state = {}
+    dirty = set()
     start = time.perf_counter()
     last_flush = start
     last_print = start
@@ -190,8 +281,25 @@ def collect(
             with conn.cursor() as cur, cur.copy(COPY_SQL) as copy:
                 for row in rows:
                     copy.write_row(row)
-            conn.commit()
             rows.clear()
+        if dirty:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    STATE_UPSERT_SQL,
+                    [
+                        {
+                            "icao": icao,
+                            "last_seen": state[icao]["last_seen"],
+                            "msg_heard": state[icao]["msg_heard"],
+                            **{key: state[icao].get(key) for key in STATE_FIELDS},
+                        }
+                        for icao in dirty
+                    ],
+                )
+            for icao in dirty:
+                state[icao]["msg_heard"] = 0
+            dirty.clear()
+        conn.commit()
 
     with open(snippet_path, "wb") as store, db.connect() as conn:
         conn.execute("delete from messages where capture_file = %(f)s", {"f": snippet_rel})
@@ -215,6 +323,8 @@ def collect(
                     last_abs = abs_off
                     icao = msg["icao"]
                     n_detected += 1
+                    stamp = started + timedelta(seconds=abs_off / sample_rate_hz)
+                    track_state(state, dirty, icao, stamp, msg)
                     if icao not in seen:
                         seen.add(icao)
                         print(f"\n  ✈  {icao}   (aircraft #{len(seen)})")
@@ -242,7 +352,7 @@ def collect(
                             snippet_rel,
                             n_stored * WINDOW,
                             WINDOW,
-                            started + timedelta(seconds=abs_off / sample_rate_hz),
+                            stamp,
                             session,
                             msg["df"],
                             icao,
