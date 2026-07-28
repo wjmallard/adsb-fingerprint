@@ -7,6 +7,7 @@ can expose channel/geometry confounds rather than hardware fingerprints.
 """
 
 import argparse
+import re
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -139,6 +140,35 @@ def _labels(icaos):
         )
         for row in rows
     }
+
+
+def _makers(icaos):
+    """Map each ICAO to its maker: the registry manufacturer's first word.
+
+    The FAA/OpenSky manufacturer field spells one brand many ways ("AIRBUS",
+    "Airbus Industrie", "AIRBUS S A S", "EMBRAER-EMPRESA BRASILEIRA DE"), so
+    the leading word — split on spaces, hyphens and slashes, title-cased —
+    collapses them without inventing a taxonomy. Corporate parentage is left
+    alone: the registry's own answer stands, so Textron-built Cessnas group
+    under whichever name their registration actually carries.
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            select
+                icao,
+                manufacturer
+            from aircraft
+            where icao = any(%(icaos)s)
+            """,
+            {"icaos": list(icaos)},
+        ).fetchall()
+    makers = {}
+    for row in rows:
+        words = re.split(r"[\s\-/]+", (row["manufacturer"] or "").strip())
+        if words and words[0]:
+            makers[row["icao"]] = words[0].title()
+    return makers
 
 
 def main():

@@ -12,9 +12,11 @@ embedding per message, and writes two artifacts into the run directory:
                     message metadata (icao, session, split, prediction,
                     rssi)
   embedding.html  — a self-contained canvas-2D viewer (no server, no
-                    WebGL, no network): color by aircraft / session /
-                    rssi / correctness / prediction, hover for details,
-                    click legend entries to isolate, drag/wheel to
+                    WebGL, no network): color by aircraft / maker /
+                    session / rssi / correctness / prediction, hide
+                    aircraft below a message-count threshold, hover for
+                    details, click legend entries to isolate (maker +
+                    isolate = "show me every Cessna"), drag/wheel to
                     pan/zoom.
 
 The IQ is shown to the model in the checkpoint's own ablation variant —
@@ -46,6 +48,7 @@ from adsb_fingerprint.model import (
 )
 
 SPLITS = ("train", "held-out", "other")
+UNKNOWN_MAKER = "unregistered"
 
 
 def embed_corpus(net, x, device, batch_size):
@@ -185,8 +188,11 @@ def main():
 
     icao_list = sorted(set(icaos.tolist()))
     labels = dataset._labels(icao_list)
+    makers = dataset._makers(icao_list)
+    maker_list = sorted({makers.get(icao, UNKNOWN_MAKER) for icao in icao_list})
     session_list = sorted(set(sessions.tolist()))
     icao_index = {icao: i for i, icao in enumerate(icao_list)}
+    maker_index = {maker: i for i, maker in enumerate(maker_list)}
     session_index = {session: i for i, session in enumerate(session_list)}
     rssi = data["rssi_db"][index]
     payload = {
@@ -195,6 +201,8 @@ def main():
         "checkpoint": args.checkpoint,
         "icaos": icao_list,
         "labels": [labels.get(icao, "") for icao in icao_list],
+        "makers": maker_list,
+        "mk": [maker_index[makers.get(icao, UNKNOWN_MAKER)] for icao in icao_list],
         "sessions": session_list,
         "xs": [round(float(v), 3) for v in xy[:, 0]],
         "ys": [round(float(v), 3) for v in xy[:, 1]],
@@ -260,10 +268,22 @@ _TEMPLATE = """<!doctype html>
   <label>color by
     <select id="mode">
       <option value="aircraft">aircraft</option>
+      <option value="maker">maker</option>
       <option value="session">session</option>
       <option value="rssi">rssi</option>
       <option value="correctness">correctness</option>
       <option value="prediction">prediction</option>
+    </select>
+  </label>
+  <label>min msgs
+    <select id="minmsgs">
+      <option value="1">all</option>
+      <option value="10">10</option>
+      <option value="25">25</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+      <option value="250">250</option>
+      <option value="500">500</option>
     </select>
   </label>
   <label><input type="checkbox" id="held"> held-out only</label>
@@ -278,8 +298,13 @@ const N = D.xs.length;
 const SPLIT = ["train", "held-out", "other"];
 const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
 const tip = document.getElementById("tip");
-let mode = "aircraft", heldOnly = false, iso = new Set();
+let mode = "aircraft", heldOnly = false, minMsgs = 1, iso = new Set();
 let scale = 1, cx = 0, cy = 0, W = 0, H = 0;
+
+// Messages per aircraft in this embedding — the "min msgs" threshold hides
+// the long tail of aircraft heard once or twice, which cannot cluster.
+const ICAO_N = new Array(D.icaos.length).fill(0);
+for (let i = 0; i < N; i++) ICAO_N[D.ic[i]]++;
 
 function catColor(i) { return `hsl(${(i * 137.508) % 360}, 65%, ${48 + (i % 3) * 7}%)`; }
 const CORRECT = { "-1": "#5a6472", 0: "#e05252", 1: "#3ecf8e", other: "#4a90d9" };
@@ -294,6 +319,7 @@ function rssiColor(v) {
 
 function key(i) {
   if (mode === "aircraft") return D.ic[i];
+  if (mode === "maker") return D.mk[D.ic[i]];
   if (mode === "session") return D.se[i];
   if (mode === "prediction") return D.pr[i];
   if (mode === "correctness") return D.sp[i] === 2 ? "other" : (D.sp[i] === 0 ? "train" : (D.ok[i] ? "correct" : "wrong"));
@@ -301,6 +327,7 @@ function key(i) {
 }
 function colorOf(i) {
   if (mode === "aircraft") return catColor(D.ic[i]);
+  if (mode === "maker") return catColor(D.mk[D.ic[i]]);
   if (mode === "session") return catColor(D.se[i]);
   if (mode === "prediction") return D.pr[i] < 0 ? "#555" : catColor(D.pr[i]);
   if (mode === "rssi") return rssiColor(D.rs[i]);
@@ -310,11 +337,12 @@ function colorOf(i) {
 function nameOf(k) {
   if (mode === "aircraft" || mode === "prediction")
     return (D.labels[k] || "").split(" ").slice(0, 2).join(" ") || D.icaos[k];
+  if (mode === "maker") return D.makers[k];
   if (mode === "session") return D.sessions[k];
   return String(k);
 }
-function passes(i) { return (!heldOnly || D.sp[i] === 1) && (iso.size === 0 || iso.has(key(i))); }
-function visible(i) { return !heldOnly || D.sp[i] === 1; }
+function passes(i) { return visible(i) && (iso.size === 0 || iso.has(key(i))); }
+function visible(i) { return (!heldOnly || D.sp[i] === 1) && ICAO_N[D.ic[i]] >= minMsgs; }
 
 function fit() {
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
@@ -366,7 +394,10 @@ function paint() {
     ctx.fillStyle = c;
     for (const i of idxs) ctx.fillRect(sx(i) - 1, sy(i) - 1, 2.5, 2.5);
   }
-  document.getElementById("count").textContent = `${shown.toLocaleString()} / ${N.toLocaleString()} shown`;
+  const kept = ICAO_N.filter((n) => n >= minMsgs).length;
+  document.getElementById("count").textContent =
+    `${shown.toLocaleString()} / ${N.toLocaleString()} shown · ` +
+    `${kept.toLocaleString()} / ${ICAO_N.length.toLocaleString()} aircraft`;
   legend();
 }
 
@@ -405,6 +436,7 @@ function legend() {
 document.getElementById("reset").onclick = () => { iso.clear(); draw(); };
 document.getElementById("mode").onchange = (e) => { mode = e.target.value; iso.clear(); draw(); };
 document.getElementById("held").onchange = (e) => { heldOnly = e.target.checked; draw(); };
+document.getElementById("minmsgs").onchange = (e) => { minMsgs = Number(e.target.value); draw(); };
 
 let dragging = false, px = 0, py = 0, moved = 0;
 canvas.onmousedown = (e) => { dragging = true; moved = 0; px = e.clientX; py = e.clientY; };
