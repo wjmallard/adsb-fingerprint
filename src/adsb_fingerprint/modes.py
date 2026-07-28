@@ -68,6 +68,11 @@ def detect_messages(iq, sample_rate, reference=None):
     Each result is a dict: sample_offset, df, icao, type_code, hex, rssi_db, and
     the decoded fields (altitude_ft, latitude, longitude, callsign, ...).
     reference is the receiver (lat, lon), required to resolve position.
+
+    DF18 with CF >= 2 (TIS-B and ADS-R) is dropped: those frames come from an
+    FAA ground station's radio under another party's address, so they can never
+    carry the airframe's fingerprint — and their addresses aren't ICAO airframe
+    addresses at all for CF 2-5.
     """
     spb = sample_rate / 1e6                       # samples per microsecond (per bit)
     mag = np.abs(iq).astype(np.float32)
@@ -107,6 +112,8 @@ def detect_messages(iq, sample_rate, reference=None):
             downlink = df(msg)
             if downlink in (17, 18) and crc(msg) == 0:
                 last = peak
+                if downlink == 18 and (int(msg[:2], 16) & 0x07) >= 2:
+                    break
                 level = float(mag[int(start) + pulse_idx].mean())
                 yield {
                     "sample_offset": int(start),
