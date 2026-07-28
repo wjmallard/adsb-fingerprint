@@ -15,14 +15,22 @@
 
     // Nose-up glyphs, rasterized at 2x and registered at runtime — no
     // sprite-sheet edits. /api/aircraft's per-airframe glyph property picks
-    // one (registry-driven: rotorcraft get the heli). plane is Material
-    // Symbols "flight"; heli is hand-drawn — rotor X, cabin, tail boom.
+    // one (registry-driven: rotorcraft get the heli, single-engine GA gets
+    // small). plane is Material Symbols "flight"; heli is hand-drawn —
+    // rotor X, cabin, tail boom; small is a hand-drawn high-wing trainer —
+    // straight square-tipped wing, boxy stabilizer, smaller footprint.
     const GLYPH_SVGS = {
         plane:
             '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
             + '<path fill="#ffd24d" stroke="#1c1e22" stroke-width="0.8" d="M21,16v-2l-8-5V3.5'
             + 'C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1'
             + 'v-1.5L13,19v-5.5L21,16z"/></svg>',
+        small:
+            '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
+            + '<path fill="#ffd24d" stroke="#1c1e22" stroke-width="0.8" '
+            + 'd="M11,5.6L12,3.9L13,5.6V19H11Z'
+            + 'M4.6,8.8h14.8v2.3H4.6Z'
+            + 'M9.3,17.4h5.4v1.6H9.3Z"/></svg>',
         heli:
             '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
             + '<g stroke="#1c1e22" stroke-width="2.6" stroke-linecap="round">'

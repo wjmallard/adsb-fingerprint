@@ -496,16 +496,29 @@ def tiles(filename):
 
 
 def glyph_for(faa_type, icao_class, manufacturer):
-    """Map-symbol class for an airframe. FAA is authoritative when present
-    (OpenSky has junk rows — e.g. a 737-9 classed H2T); OpenSky's leading
-    ICAO-class letter fills the gaps for foreign registrations; and when
-    both class fields are empty (registrations newer than the FAA snapshot,
-    e.g. N1984S), a manufacturer that calls itself a helicopter maker —
-    Airbus Helicopters, Bell Helicopter, Robinson Helicopter — settles it."""
+    """Map-symbol class for an airframe: heli, small (single-engine and
+    other hobby craft), or plane. FAA is authoritative when present (OpenSky
+    has junk rows — e.g. a 737-9 classed H2T); OpenSky's leading class
+    letters fill the gaps for foreign registrations; and when both class
+    fields are empty (registrations newer than the FAA snapshot, e.g.
+    N1984S), a manufacturer that calls itself a helicopter maker — Airbus
+    Helicopters, Bell Helicopter, Robinson Helicopter — settles heli."""
     if faa_type:
-        return "heli" if faa_type in ("Rotorcraft", "Gyroplane") else "plane"
-    if icao_class and icao_class.startswith(("H", "G")):
-        return "heli"
+        if faa_type in ("Rotorcraft", "Gyroplane"):
+            return "heli"
+        if faa_type in (
+            "Fixed wing single-engine",
+            "Glider",
+            "Powered parachute",
+            "Weight-shift-control",
+        ):
+            return "small"
+        return "plane"
+    if icao_class:
+        if icao_class.startswith(("H", "G")):
+            return "heli"
+        if icao_class.startswith("L1"):
+            return "small"
     if manufacturer and "helicopter" in manufacturer.lower():
         return "heli"
     return "plane"
