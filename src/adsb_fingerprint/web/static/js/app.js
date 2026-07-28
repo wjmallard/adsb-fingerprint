@@ -28,9 +28,9 @@
         small:
             '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
             + '<path fill="#ffd24d" stroke="#1c1e22" stroke-width="0.8" '
-            + 'd="M11,5.6L12,3.9L13,5.6V19H11Z'
-            + 'M4.6,8.8h14.8v2.3H4.6Z'
-            + 'M9.3,17.4h5.4v1.6H9.3Z"/></svg>',
+            + 'd="M10.9,4.7L12,2.8L13.1,4.7V20.1H10.9Z'
+            + 'M3.5,8.4h17v2.6H3.5Z'
+            + 'M8.9,18.3h6.2v1.8H8.9Z"/></svg>',
         heli:
             '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
             + '<g stroke="#1c1e22" stroke-width="2.6" stroke-linecap="round">'
