@@ -241,6 +241,35 @@ LIVE_REGISTRY_SQL = """
     where icao = any(%(icaos)s)
 """
 
+# /activity: distinct airframes per time-of-day bin per local calendar day.
+# Distinct-airframe counts are immune to the per-aircraft storage cap (the
+# cap drops messages, never an airframe's first appearance in a window), so
+# unlike a message count this is an honest traffic measure. The date/time
+# casts bin in the server's local timezone like FLEET_SQL's day grouping;
+# on DST-change days the repeated or skipped hour folds into its clock bins.
+ACTIVITY_BIN_MINUTES = 15
+
+ACTIVITY_SQL = """
+    select
+        captured_at::date as day,
+        floor(extract(epoch from captured_at::time) / %(bin_seconds)s)::int as bin,
+        count(distinct icao) as airframes
+    from messages
+    where crc_ok
+    and icao is not null
+    group by day, bin
+"""
+
+# Receive-chain changes (antenna swaps and the like) — drawn as tick marks
+# so era boundaries annotate the heatmap themselves.
+HARDWARE_LOG_SQL = """
+    select
+        stamp,
+        note
+    from hardware_log
+    order by stamp
+"""
+
 # Range rings as ST_Buffer circles on geography (quad_segs=32 -> 129-point
 # rings), GeoJSON-encoded by PostGIS itself.
 RINGS_SQL = """
@@ -416,6 +445,56 @@ def api_live():
         "minutes": minutes,
         "now": round(time.time(), 1),
     }
+
+
+@app.route("/activity")
+def activity():
+    # Heatmap of when airframes were heard: one row per local day (newest
+    # first), one cell per ACTIVITY_BIN_MINUTES of the day, color = distinct
+    # airframes. Loaded on demand like /aircraft — reload for fresh data. A
+    # blank cell means no stored messages, which conflates "collector down"
+    # with "empty sky"; in practice even the 2-5 AM drought logs a few, so
+    # blanks read as collection gaps and the page doubles as an uptime audit.
+    bins_per_day = 24 * 60 // ACTIVITY_BIN_MINUTES
+    with db.connect() as conn:
+        rows = conn.execute(
+            ACTIVITY_SQL,
+            {
+                "bin_seconds": ACTIVITY_BIN_MINUTES * 60,
+            },
+        ).fetchall()
+        hardware = conn.execute(HARDWARE_LOG_SQL).fetchall()
+    grid = {}
+    for row in rows:
+        cells = grid.setdefault(row["day"], [0] * bins_per_day)
+        cells[row["bin"]] = row["airframes"]
+    marks = []
+    for row in hardware:
+        stamp = row["stamp"].astimezone()
+        marks.append(
+            {
+                "iso": stamp.date().isoformat(),
+                "frac": (stamp.hour * 3600 + stamp.minute * 60 + stamp.second) / 86400.0,
+                "note": row["note"],
+            },
+        )
+    data = {
+        "bin_minutes": ACTIVITY_BIN_MINUTES,
+        "peak": max((max(cells) for cells in grid.values()), default=0),
+        "days": [
+            {
+                "iso": day.isoformat(),
+                "label": day.strftime("%a %m-%d"),
+                "cells": cells,
+            }
+            for day, cells in sorted(grid.items(), reverse=True)
+        ],
+        "marks": marks,
+    }
+    return render_template(
+        "activity.html",
+        data=data,
+    )
 
 
 @app.route("/embeddings")

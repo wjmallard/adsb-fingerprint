@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADS-B Activity</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        #wrap { overflow-x: auto; margin-top: 12px; }
+        #heatmap { display: block; }
+        #legend {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 10px;
+            font-size: 11px;
+            color: #5c636e;
+        }
+        #legend canvas { display: block; border-radius: 2px; }
+        #legend .mark { color: #e0a84e; }
+        #tip {
+            position: fixed;
+            display: none;
+            z-index: 10;
+            padding: 4px 8px;
+            background: rgba(28, 30, 34, 0.95);
+            border: 1px solid #3a3e46;
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        #tip .note { color: #e0a84e; }
+        #tip .dim { color: #6b7280; }
+    </style>
+</head>
+<body>
+    <main id="fleet">
+        <h1>activity</h1>
+        <nav class="page-nav">
+            <a href="/">live map</a>
+            <a href="/live">live id</a>
+            <a href="/aircraft">aircraft</a>
+            <a href="/embeddings">embeddings</a>
+        </nav>
+        <p class="detail-note" id="status"></p>
+        <div id="wrap">
+            <canvas id="heatmap"></canvas>
+        </div>
+        <div id="legend">
+            <span>0</span>
+            <canvas id="ramp" width="140" height="10"></canvas>
+            <span id="peak"></span>
+            <span>distinct airframes per bin, absolute scale</span>
+            <span class="mark">▏ hardware change</span>
+        </div>
+        <p class="detail-note">
+            each cell counts the distinct airframes stored in that window —
+            immune to the per-aircraft storage cap, which drops messages but
+            never an airframe. a blank cell has no stored messages at all:
+            a collection gap or a truly dead sky (even the 2–5 am drought
+            usually logs 1–3). local time · reload for fresh data.
+        </p>
+        <div id="tip"></div>
+    </main>
+    <script>
+        const DATA = {{ data | tojson }};
+
+        const statusEl = document.getElementById("status");
+        const canvas = document.getElementById("heatmap");
+        const tip = document.getElementById("tip");
+
+        const BINS = 24 * 60 / DATA.bin_minutes;
+        const CELL_W = 12;
+        const CELL_H = 22;
+        const GUTTER = 72;    // day labels
+        const AXIS = 18;      // hour labels above the newest row
+        const MONO = "ui-monospace, Menlo, monospace";
+
+        // Viridis endpoints-and-midpoints — perceptual, and its dark low end
+        // still separates from the empty-slot color.
+        const RAMP = [
+            [0x44, 0x01, 0x54],
+            [0x3b, 0x52, 0x8b],
+            [0x21, 0x91, 0x8c],
+            [0x5e, 0xc9, 0x62],
+            [0xfd, 0xe7, 0x25],
+        ];
+
+        function color(t) {
+            const x = Math.min(Math.max(t, 0), 1) * (RAMP.length - 1);
+            const i = Math.min(Math.floor(x), RAMP.length - 2);
+            const f = x - i;
+            const c = RAMP[i].map((a, k) => Math.round(a + (RAMP[i + 1][k] - a) * f));
+            return `rgb(${c[0]},${c[1]},${c[2]})`;
+        }
+
+        function hhmm(minutes) {
+            const h = Math.floor(minutes / 60) % 24;
+            const m = minutes % 60;
+            return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        }
+
+        function draw() {
+            const cssW = GUTTER + BINS * CELL_W;
+            const cssH = AXIS + DATA.days.length * CELL_H;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.style.width = `${cssW}px`;
+            canvas.style.height = `${cssH}px`;
+            canvas.width = cssW * dpr;
+            canvas.height = cssH * dpr;
+            const ctx = canvas.getContext("2d");
+            ctx.scale(dpr, dpr);
+
+            ctx.font = `10px ${MONO}`;
+            ctx.fillStyle = "#5c636e";
+            ctx.textBaseline = "alphabetic";
+            for (let h = 0; h < 24; h += 3) {
+                ctx.fillText(hhmm(h * 60), GUTTER + h * (60 / DATA.bin_minutes) * CELL_W, AXIS - 6);
+            }
+
+            for (const [r, day] of DATA.days.entries()) {
+                const y = AXIS + r * CELL_H;
+                ctx.font = `11px ${MONO}`;
+                ctx.fillStyle = "#8a919c";
+                ctx.textBaseline = "middle";
+                ctx.fillText(day.label, 0, y + (CELL_H - 3) / 2 + 1);
+                for (let b = 0; b < BINS; b++) {
+                    const n = day.cells[b];
+                    ctx.fillStyle = n > 0 ? color(n / DATA.peak) : "#16181c";
+                    ctx.fillRect(GUTTER + b * CELL_W, y, CELL_W - 1, CELL_H - 3);
+                }
+            }
+
+            ctx.fillStyle = "#e0a84e";
+            for (const mark of DATA.marks) {
+                const r = DATA.days.findIndex((day) => day.iso === mark.iso);
+                if (r < 0) continue;
+                ctx.fillRect(GUTTER + mark.frac * BINS * CELL_W - 1, AXIS + r * CELL_H, 2, CELL_H - 3);
+            }
+        }
+
+        function drawRamp() {
+            const ramp = document.getElementById("ramp");
+            const ctx = ramp.getContext("2d");
+            for (let x = 0; x < ramp.width; x++) {
+                ctx.fillStyle = color(x / (ramp.width - 1));
+                ctx.fillRect(x, 0, 1, ramp.height);
+            }
+        }
+
+        canvas.addEventListener("mousemove", (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const b = Math.floor((event.clientX - rect.left - GUTTER) / CELL_W);
+            const r = Math.floor((event.clientY - rect.top - AXIS) / CELL_H);
+            if (b < 0 || b >= BINS || r < 0 || r >= DATA.days.length) {
+                tip.style.display = "none";
+                return;
+            }
+            const day = DATA.days[r];
+            const n = day.cells[b];
+            const span = `${hhmm(b * DATA.bin_minutes)}–${hhmm((b + 1) * DATA.bin_minutes)}`;
+            tip.replaceChildren();
+            const line = document.createElement("div");
+            line.textContent = `${day.label} · ${span} · `;
+            const count = document.createElement("span");
+            count.textContent = n > 0 ? `${n} airframes` : "no messages";
+            if (n === 0) count.className = "dim";
+            line.appendChild(count);
+            tip.appendChild(line);
+            for (const mark of DATA.marks) {
+                if (mark.iso === day.iso && Math.floor(mark.frac * BINS) === b) {
+                    const note = document.createElement("div");
+                    note.className = "note";
+                    note.textContent = `▏ ${mark.note}`;
+                    tip.appendChild(note);
+                }
+            }
+            tip.style.display = "block";
+            tip.style.left = `${event.clientX + 14}px`;
+            tip.style.top = `${event.clientY + 14}px`;
+        });
+        canvas.addEventListener("mouseleave", () => {
+            tip.style.display = "none";
+        });
+
+        if (DATA.days.length) {
+            statusEl.textContent =
+                `${DATA.days.length} days · ${DATA.bin_minutes}-min bins · ` +
+                `peak ${DATA.peak} airframes in one bin`;
+            document.getElementById("peak").textContent = DATA.peak;
+            draw();
+            drawRamp();
+        } else {
+            statusEl.textContent = "no messages indexed yet";
+        }
+    </script>
+</body>
+</html>
