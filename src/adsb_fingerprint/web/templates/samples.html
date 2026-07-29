@@ -99,7 +99,9 @@
             top: |IQ| envelope on the 1 µs bit grid — PPM half-bit pulses, plus
             the fixed 8 µs preamble. middle: unwrapped carrier phase where the
             signal is on (slope = carrier frequency offset — watch it stay put
-            between this airframe's messages and differ across airframes).
+            between this airframe's messages and differ across airframes); the
+            on-gate adapts to each message's own noise floor and dot brightness
+            tracks sample strength, so weak messages read as sparse, not jumpy.
             bottom: raw I and Q. scrub a busy regular across sessions to see
             what holds still (fingerprint) versus what swings (channel).
         </p>
@@ -119,7 +121,7 @@
         };
         const PX = 3;          // css px per sample
         const GUT = 34;        // left gutter for panel names
-        const GATE = 0.25;     // |IQ| floor (of peak) for phase to be signal
+        const GATE = 0.25;     // minimum |IQ| floor (of peak) for phase to be signal
 
         const PREAMBLE_PULSES_US = [[0, 0.5], [1, 1.5], [3.5, 4], [4.5, 5]];
         const MASK_US = [CFG.preamble_us + 8, CFG.preamble_us + 32];
@@ -199,18 +201,26 @@
             const {h} = PANELS.phase;
             const ctx = panelCtx(PANELS.phase, n);
             grid(ctx, n, h, "phase");
+            // Gate against this message's own noise, not just a fixed floor:
+            // the preamble's 5-8 us is protocol silence, so its median |IQ|
+            // is an in-message noise estimate. On weak messages a fixed gate
+            // admits noise-dominated pulse-edge samples whose ~random phase
+            // flips the unwrap branch and paints fake jump discontinuities.
+            const quiet = [...mag.slice(Math.floor(5 * CFG.spb), Math.floor(8 * CFG.spb))]
+                .sort((a, b) => a - b)[Math.floor(1.5 * CFG.spb)] || 0;
+            const gate = Math.max(GATE, 3 * quiet);
             const pts = [];
             let prev = null;
             let offset = 0;
             for (let s = 0; s < n; s++) {
-                if (mag[s] < GATE) continue;
+                if (mag[s] < gate) continue;
                 const a = Math.atan2(iq.q[s], iq.i[s]);
                 if (prev !== null) {
                     while (a + offset - prev > Math.PI) offset -= 2 * Math.PI;
                     while (a + offset - prev < -Math.PI) offset += 2 * Math.PI;
                 }
                 prev = a + offset;
-                pts.push([s, prev]);
+                pts.push([s, prev, mag[s]]);
             }
             if (!pts.length) return;
             let lo = Infinity;
@@ -222,11 +232,16 @@
             const span = Math.max(hi - lo, 1e-6);
             const y = (v) => 6 + (h - 24) * (1 - (v - lo) / span);
             ctx.fillStyle = "#d9c979";
-            for (const [s, v] of pts) ctx.fillRect(GUT + s * PX, y(v), 2, 2);
+            for (const [s, v, m] of pts) {
+                ctx.globalAlpha = Math.min(1, m);
+                ctx.fillRect(GUT + s * PX, y(v), 2, 2);
+            }
+            ctx.globalAlpha = 1;
             ctx.fillStyle = "#5c636e";
             ctx.font = "9px ui-monospace, Menlo, monospace";
             const turns = (hi - lo) / (2 * Math.PI);
-            ctx.fillText(`${turns.toFixed(1)} turns over the message`, GUT + 4, 10);
+            const gated = gate > GATE ? ` · gate ${gate.toFixed(2)} (noisy msg)` : "";
+            ctx.fillText(`${turns.toFixed(1)} turns over the message${gated}`, GUT + 4, 10);
         }
 
         function drawTraces(iq) {
