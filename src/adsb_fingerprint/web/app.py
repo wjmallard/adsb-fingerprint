@@ -3,6 +3,7 @@
 import json
 import time
 
+import numpy as np
 import yaml
 from flask import (
     Flask,
@@ -15,6 +16,7 @@ from flask import (
 from adsb_fingerprint import (
     config,
     db,
+    modes,
 )
 
 app = Flask(__name__)
@@ -270,6 +272,64 @@ HARDWARE_LOG_SQL = """
     order by stamp
 """
 
+# /samples: the per-message IQ scrubber. The airframe picker is every ICAO
+# ever heard, busiest first; the message list is one airframe's full history;
+# the IQ endpoint slices the snippet off disk exactly as dataset.load_examples
+# does (offset read, peak-amplitude normalize) so the page shows the
+# model's-eye view, not the raw capture.
+SAMPLES_AIRFRAMES_SQL = """
+    with seen as (
+        select
+            icao,
+            count(*) as msg_count
+        from messages
+        where crc_ok
+        and icao is not null
+        group by icao
+    )
+    select
+        seen.icao,
+        seen.msg_count,
+        case
+            when aircraft.source = 'faa' and aircraft.registration is not null
+            then 'N' || aircraft.registration
+            else aircraft.registration
+        end as registration,
+        aircraft.model
+    from seen
+    left join aircraft on aircraft.icao = seen.icao
+    order by seen.msg_count desc
+"""
+
+SAMPLES_LIST_SQL = """
+    select
+        id,
+        extract(epoch from captured_at) as t,
+        session,
+        rssi_db,
+        df
+    from messages
+    where icao = %(icao)s
+    and crc_ok
+    order by captured_at
+"""
+
+SAMPLES_MESSAGE_SQL = """
+    select
+        icao,
+        capture_file,
+        sample_offset,
+        n_samples,
+        session,
+        captured_at,
+        rssi_db,
+        df,
+        hex
+    from messages
+    where id = %(id)s
+    and crc_ok
+"""
+
 # Range rings as ST_Buffer circles on geography (quad_segs=32 -> 129-point
 # rings), GeoJSON-encoded by PostGIS itself.
 RINGS_SQL = """
@@ -495,6 +555,72 @@ def activity():
         "activity.html",
         data=data,
     )
+
+
+@app.route("/samples")
+def samples():
+    # The scrub page itself; the airframe list is server-rendered into a
+    # datalist, messages and IQ arrive from the api endpoints as you scrub.
+    # The timing constants mirror dataset.apply_variant so the shaded mask
+    # span is exactly what icao_masked training zeroes.
+    with db.connect() as conn:
+        airframes = conn.execute(SAMPLES_AIRFRAMES_SQL).fetchall()
+    return render_template(
+        "samples.html",
+        airframes=airframes,
+        icao=request.args.get("icao", default="").upper(),
+        spb=config.SAMPLE_RATE_HZ / 1e6,
+        preamble_us=modes.PREAMBLE_US,
+    )
+
+
+@app.route("/api/samples/<icao>")
+def api_samples(icao):
+    with db.connect() as conn:
+        rows = conn.execute(SAMPLES_LIST_SQL, {"icao": icao.upper()}).fetchall()
+    return {
+        "icao": icao.upper(),
+        "messages": [
+            {
+                "id": row["id"],
+                "t": round(float(row["t"]), 3),
+                "session": row["session"],
+                "rssi_db": row["rssi_db"],
+                "df": row["df"],
+            }
+            for row in rows
+        ],
+    }
+
+
+@app.route("/api/samples/message/<int:message_id>")
+def api_samples_message(message_id):
+    # One snippet, read at its byte offset and peak-normalized like the
+    # training loader — the arrays here are what the model ingests.
+    with db.connect() as conn:
+        row = conn.execute(SAMPLES_MESSAGE_SQL, {"id": message_id}).fetchone()
+    if row is None:
+        abort(404)
+    iq = np.fromfile(
+        config.CAPTURE_DIR / row["capture_file"],
+        dtype=np.complex64,
+        count=row["n_samples"],
+        offset=row["sample_offset"] * np.dtype(np.complex64).itemsize,
+    )
+    peak = float(np.abs(iq).max()) if len(iq) else 0.0
+    if peak > 0:
+        iq = iq / peak
+    return {
+        "id": message_id,
+        "icao": row["icao"],
+        "session": row["session"],
+        "captured_at": row["captured_at"].astimezone().isoformat(),
+        "rssi_db": row["rssi_db"],
+        "df": row["df"],
+        "hex": row["hex"],
+        "i": [round(float(v), 5) for v in iq.real],
+        "q": [round(float(v), 5) for v in iq.imag],
+    }
 
 
 @app.route("/embeddings")

@@ -14,6 +14,7 @@
             <a href="/">live map</a>
             <a href="/live">live id</a>
             <a href="/activity">activity</a>
+            <a href="/samples">samples</a>
             <a href="/embeddings">embeddings</a>
         </nav>
         <p class="detail-note">
@@ -45,7 +46,7 @@
             <tbody>
                 {% for row in rows %}
                 <tr{% if row.msg_count >= min_train %} class="trainable"{% endif %}>
-                    <td>{{ row.icao }}</td>
+                    <td><a href="/samples?icao={{ row.icao }}">{{ row.icao }}</a></td>
                     <td>{{ row.callsign or "" }}</td>
                     <td>{{ row.registration or "" }}</td>
                     <td>{{ row.typecode or "" }}</td>

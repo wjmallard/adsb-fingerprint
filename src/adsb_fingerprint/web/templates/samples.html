@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADS-B Samples</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        #controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin: 12px 0 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+        }
+        #controls input[type="text"] {
+            width: 22em;
+            padding: 3px 8px;
+            background: #1c1e22;
+            color: #c8cdd4;
+            border: 1px solid #3a3e46;
+            border-radius: 4px;
+            font: inherit;
+        }
+        #controls button {
+            background: #2a2d33;
+            color: #c8cdd4;
+            border: 1px solid #3a3e46;
+            border-radius: 4px;
+            padding: 2px 10px;
+            cursor: pointer;
+            font: inherit;
+        }
+        #controls button:hover { background: #34383f; }
+        #scrub {
+            flex: 1;
+            max-width: 480px;
+            accent-color: #5ad1e6;
+        }
+        #meta {
+            margin: 2px 0 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            color: #8a919c;
+            min-height: 1.2em;
+        }
+        #meta .hex { color: #5c636e; }
+        #wrap { overflow-x: auto; }
+        #panels-iq canvas { display: block; margin-bottom: 8px; }
+        #legend {
+            display: flex;
+            gap: 14px;
+            margin-top: 2px;
+            font-size: 11px;
+            color: #5c636e;
+        }
+        #legend .pre { color: #7fd487; }
+        #legend .mask { color: #e08484; }
+    </style>
+</head>
+<body>
+    <main id="fleet">
+        <h1>sample viewer</h1>
+        <nav class="page-nav">
+            <a href="/">live map</a>
+            <a href="/live">live id</a>
+            <a href="/aircraft">aircraft</a>
+            <a href="/activity">activity</a>
+            <a href="/embeddings">embeddings</a>
+        </nav>
+        <div id="controls">
+            <input type="text" id="pick" list="airframes" placeholder="icao / registration…" autocomplete="off">
+            <datalist id="airframes">
+                {% for af in airframes %}
+                <option value="{{ af.icao }}">{{ af.registration or "" }} {{ af.model or "" }} · {{ af.msg_count }} msgs</option>
+                {% endfor %}
+            </datalist>
+            <button id="prev">←</button>
+            <input type="range" id="scrub" min="0" max="0" value="0" disabled>
+            <button id="next">→</button>
+            <span id="pos"></span>
+        </div>
+        <p id="meta"></p>
+        <div id="wrap">
+            <div id="panels-iq">
+                <canvas id="env"></canvas>
+                <canvas id="phase"></canvas>
+                <canvas id="traces"></canvas>
+            </div>
+        </div>
+        <div id="legend">
+            <span class="pre">▮ preamble pulses</span>
+            <span class="mask">▮ icao bits 9–32 (zeroed in icao_masked training)</span>
+            <span>arrow keys scrub · shown peak-normalized, the model's-eye view</span>
+        </div>
+        <p class="detail-note">
+            top: |IQ| envelope on the 1 µs bit grid — PPM half-bit pulses, plus
+            the fixed 8 µs preamble. middle: unwrapped carrier phase where the
+            signal is on (slope = carrier frequency offset — watch it stay put
+            between this airframe's messages and differ across airframes).
+            bottom: raw I and Q. scrub a busy regular across sessions to see
+            what holds still (fingerprint) versus what swings (channel).
+        </p>
+    </main>
+    <script>
+        const CFG = {{ {"spb": spb, "preamble_us": preamble_us, "icao": icao} | tojson }};
+
+        const pickEl = document.getElementById("pick");
+        const scrubEl = document.getElementById("scrub");
+        const posEl = document.getElementById("pos");
+        const metaEl = document.getElementById("meta");
+
+        const PANELS = {
+            env: {el: document.getElementById("env"), h: 150},
+            phase: {el: document.getElementById("phase"), h: 130},
+            traces: {el: document.getElementById("traces"), h: 130},
+        };
+        const PX = 3;          // css px per sample
+        const GUT = 34;        // left gutter for panel names
+        const GATE = 0.25;     // |IQ| floor (of peak) for phase to be signal
+
+        const PREAMBLE_PULSES_US = [[0, 0.5], [1, 1.5], [3.5, 4], [4.5, 5]];
+        const MASK_US = [CFG.preamble_us + 8, CFG.preamble_us + 32];
+
+        let messages = [];
+        let index = -1;
+        const cache = new Map();
+
+        function panelCtx(panel, n) {
+            const cssW = GUT + n * PX;
+            const dpr = window.devicePixelRatio || 1;
+            panel.el.style.width = `${cssW}px`;
+            panel.el.style.height = `${panel.h}px`;
+            panel.el.width = cssW * dpr;
+            panel.el.height = panel.h * dpr;
+            const ctx = panel.el.getContext("2d");
+            ctx.scale(dpr, dpr);
+            ctx.fillStyle = "#16181c";
+            ctx.fillRect(0, 0, cssW, panel.h);
+            return ctx;
+        }
+
+        function grid(ctx, n, h, name) {
+            // 1 us bit grid with labels every 10 us, then the two spans the
+            // project cares about: preamble pulse slots and the masked field.
+            const us = n / CFG.spb;
+            ctx.font = "9px ui-monospace, Menlo, monospace";
+            for (let u = 0; u <= us; u++) {
+                const x = GUT + u * CFG.spb * PX;
+                ctx.fillStyle = u % 10 ? "#1e2126" : "#2a2d33";
+                ctx.fillRect(x, 0, 1, h);
+                if (u % 10 === 0) {
+                    ctx.fillStyle = "#5c636e";
+                    ctx.fillText(`${u}`, x + 2, h - 3);
+                }
+            }
+            ctx.fillStyle = "rgba(127, 212, 135, 0.10)";
+            for (const [a, b] of PREAMBLE_PULSES_US) {
+                ctx.fillRect(GUT + a * CFG.spb * PX, 0, (b - a) * CFG.spb * PX, h);
+            }
+            ctx.fillStyle = "rgba(224, 132, 132, 0.09)";
+            ctx.fillRect(
+                GUT + Math.round(MASK_US[0] * CFG.spb) * PX,
+                0,
+                (Math.round(MASK_US[1] * CFG.spb) - Math.round(MASK_US[0] * CFG.spb)) * PX,
+                h,
+            );
+            ctx.fillStyle = "#5c636e";
+            ctx.save();
+            ctx.translate(9, h / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.textAlign = "center";
+            ctx.fillText(name, 0, 0);
+            ctx.restore();
+        }
+
+        function drawEnvelope(mag) {
+            const n = mag.length;
+            const {h} = PANELS.env;
+            const ctx = panelCtx(PANELS.env, n);
+            grid(ctx, n, h, "|iq|");
+            const y = (v) => (h - 14) * (1 - v) + 4;
+            ctx.beginPath();
+            ctx.moveTo(GUT, y(0));
+            for (let s = 0; s < n; s++) ctx.lineTo(GUT + s * PX, y(mag[s]));
+            ctx.lineTo(GUT + (n - 1) * PX, y(0));
+            ctx.closePath();
+            ctx.fillStyle = "rgba(90, 209, 230, 0.25)";
+            ctx.fill();
+            ctx.strokeStyle = "#5ad1e6";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function drawPhase(iq, mag) {
+            const n = mag.length;
+            const {h} = PANELS.phase;
+            const ctx = panelCtx(PANELS.phase, n);
+            grid(ctx, n, h, "phase");
+            const pts = [];
+            let prev = null;
+            let offset = 0;
+            for (let s = 0; s < n; s++) {
+                if (mag[s] < GATE) continue;
+                const a = Math.atan2(iq.q[s], iq.i[s]);
+                if (prev !== null) {
+                    while (a + offset - prev > Math.PI) offset -= 2 * Math.PI;
+                    while (a + offset - prev < -Math.PI) offset += 2 * Math.PI;
+                }
+                prev = a + offset;
+                pts.push([s, prev]);
+            }
+            if (!pts.length) return;
+            let lo = Infinity;
+            let hi = -Infinity;
+            for (const [, v] of pts) {
+                lo = Math.min(lo, v);
+                hi = Math.max(hi, v);
+            }
+            const span = Math.max(hi - lo, 1e-6);
+            const y = (v) => 6 + (h - 24) * (1 - (v - lo) / span);
+            ctx.fillStyle = "#d9c979";
+            for (const [s, v] of pts) ctx.fillRect(GUT + s * PX, y(v), 2, 2);
+            ctx.fillStyle = "#5c636e";
+            ctx.font = "9px ui-monospace, Menlo, monospace";
+            const turns = (hi - lo) / (2 * Math.PI);
+            ctx.fillText(`${turns.toFixed(1)} turns over the message`, GUT + 4, 10);
+        }
+
+        function drawTraces(iq) {
+            const n = iq.i.length;
+            const {h} = PANELS.traces;
+            const ctx = panelCtx(PANELS.traces, n);
+            grid(ctx, n, h, "i · q");
+            const y = (v) => 4 + (h - 20) * (1 - (v + 1) / 2);
+            ctx.fillStyle = "#2a2d33";
+            ctx.fillRect(GUT, y(0), n * PX, 1);
+            for (const [key, color] of [["i", "#7fd487"], ["q", "#e08484"]]) {
+                ctx.beginPath();
+                ctx.moveTo(GUT, y(iq[key][0]));
+                for (let s = 1; s < n; s++) ctx.lineTo(GUT + s * PX, y(iq[key][s]));
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
+
+        function render(msg) {
+            const mag = msg.i.map((v, s) => Math.hypot(v, msg.q[s]));
+            drawEnvelope(mag);
+            drawPhase(msg, mag);
+            drawTraces(msg);
+            const when = new Date(msg.captured_at).toLocaleString();
+            metaEl.replaceChildren();
+            metaEl.append(
+                `${msg.icao} · ${when} · df${msg.df} · ` +
+                `${msg.rssi_db != null ? msg.rssi_db.toFixed(1) : "?"} dB · ${msg.session} · `,
+            );
+            const hex = document.createElement("span");
+            hex.className = "hex";
+            hex.textContent = msg.hex || "";
+            metaEl.appendChild(hex);
+        }
+
+        async function show(k) {
+            if (!messages.length) return;
+            index = Math.min(Math.max(k, 0), messages.length - 1);
+            scrubEl.value = index;
+            posEl.textContent = `${index + 1}/${messages.length}`;
+            const id = messages[index].id;
+            if (!cache.has(id)) {
+                const response = await fetch(`/api/samples/message/${id}`);
+                if (cache.size > 300) cache.delete(cache.keys().next().value);
+                cache.set(id, await response.json());
+            }
+            if (messages[index].id === id) render(cache.get(id));
+        }
+
+        async function load(icao) {
+            icao = icao.trim().toUpperCase();
+            if (!/^[0-9A-F]{6}$/.test(icao)) return;
+            const response = await fetch(`/api/samples/${icao}`);
+            messages = (await response.json()).messages;
+            history.replaceState(null, "", `/samples?icao=${icao}`);
+            if (!messages.length) {
+                metaEl.textContent = `${icao}: no stored messages`;
+                scrubEl.disabled = true;
+                posEl.textContent = "";
+                return;
+            }
+            scrubEl.disabled = false;
+            scrubEl.max = messages.length - 1;
+            show(messages.length - 1);
+        }
+
+        pickEl.addEventListener("change", () => load(pickEl.value));
+        scrubEl.addEventListener("input", () => show(Number(scrubEl.value)));
+        document.getElementById("prev").onclick = () => show(index - 1);
+        document.getElementById("next").onclick = () => show(index + 1);
+        document.addEventListener("keydown", (event) => {
+            if (event.target === pickEl) return;
+            if (event.key === "ArrowLeft") show(index - 1);
+            if (event.key === "ArrowRight") show(index + 1);
+        });
+
+        if (CFG.icao) {
+            pickEl.value = CFG.icao;
+            load(CFG.icao);
+        }
+    </script>
+</body>
+</html>

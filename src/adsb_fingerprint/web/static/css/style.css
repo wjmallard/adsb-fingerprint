@@ -316,3 +316,14 @@ a.run-name:hover {
 #fleet tr.trainable td.msgs {
     color: #7fd487;
 }
+
+/* ICAO cells link into the /samples IQ scrubber */
+#fleet td a {
+    color: inherit;
+    text-decoration: none;
+}
+
+#fleet td a:hover {
+    color: #5ad1e6;
+    text-decoration: underline;
+}
