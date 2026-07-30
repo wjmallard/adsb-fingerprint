@@ -32,6 +32,7 @@ FIELDS = [
 ]
 
 STATUS_EVERY_SECONDS = 300
+NO_FIX_EVERY_SECONDS = 30
 
 
 def nmea_deg(value, hemisphere):
@@ -118,6 +119,9 @@ def main():
     track = TrackWriter(config.GPS_TRACK_DIR)
     started = time.monotonic()
     last_status = started
+    no_fix_since = started
+    last_fix = None
+    sats_in_view = {}
     n_fixes = 0
     rmc_date = None
     rmc_speed = ""
@@ -137,6 +141,21 @@ def main():
                 with serial.Serial(port, 9600, timeout=2) as ser:
                     print(f"logging {port}")
                     while not expired():
+                        now = time.monotonic()
+                        have_fix = no_fix_since is None
+                        interval = STATUS_EVERY_SECONDS if have_fix else NO_FIX_EVERY_SECONDS
+                        if now - last_status >= interval:
+                            if have_fix:
+                                print(f"{n_fixes} fixes logged, latest {last_fix[0]}, {last_fix[1]}")
+                            else:
+                                state = "no fix yet" if n_fixes == 0 else "fix lost"
+                                elapsed = int(now - no_fix_since)
+                                in_view = sum(sats_in_view.values())
+                                print(
+                                    f"{state} — {in_view} satellites in view, "
+                                    f"{elapsed // 60}m{elapsed % 60:02d}s elapsed"
+                                )
+                            last_status = now
                         line = ser.readline().decode(errors="replace").strip()
                         if not checksum_ok(line):
                             continue
@@ -149,7 +168,10 @@ def main():
                                 rmc_track = fields[8]
                         elif sentence == "GGA" and len(fields) > 9:
                             if fields[6] in ("", "0") or not fields[2] or not fields[4]:
+                                if no_fix_since is None:
+                                    no_fix_since = time.monotonic()
                                 continue
+                            no_fix_since = None
                             host_utc = datetime.now(timezone.utc).isoformat()
                             gps_utc = ""
                             if rmc_date and fields[1]:
@@ -171,12 +193,14 @@ def main():
                             ]
                             track.write(row)
                             n_fixes += 1
+                            last_fix = (row[2], row[3])
                             if args.verbose:
                                 print(",".join(row))
-                            now = time.monotonic()
-                            if now - last_status >= STATUS_EVERY_SECONDS:
-                                print(f"{n_fixes} fixes logged, latest {row[2]}, {row[3]}")
-                                last_status = now
+                        elif sentence == "GSV" and len(fields) > 3:
+                            # One GSV group per talker (constellation); field 3
+                            # counts that constellation's satellites in view.
+                            if fields[3].isdigit():
+                                sats_in_view[fields[0][:2]] = int(fields[3])
             except (serial.SerialException, OSError) as err:
                 print(f"serial error: {err} — reconnecting in 5 s", file=sys.stderr)
                 time.sleep(5)
