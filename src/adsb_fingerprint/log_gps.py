@@ -588,15 +588,17 @@ class Dashboard:
                     green if used else (dim if snr is None else 0),
                 )
 
-        ev_w = sky_x - 1 if sky_on else width - 1
-        room = height - (y + 2) - 1
+        room = height - y - 3
         if room >= 1 and self.events:
-            put(y + 1, 0, "events", bold)
-            for i, (stamp, text) in enumerate(list(self.events)[-room:]):
+            shown = list(self.events)[-room:]
+            frame(y, 0, len(shown) + 2, pane_w, " events ")
+            ev_w = pane_w - 3
+            for i, (stamp, text) in enumerate(shown):
                 line = f"{stamp}  {text}"
                 if len(line) > ev_w:
                     line = "..." + line[-(ev_w - 3):]
-                put(y + 2 + i, 0, line, dim)
+                put(y + 1 + i, 2, line, dim)
+            y += len(shown) + 2
         hint = "q quit  p pause"
         put(height - 1, max(0, width - len(hint) - 2), hint, dim)
 
