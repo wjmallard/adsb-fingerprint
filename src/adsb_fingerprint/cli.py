@@ -13,6 +13,7 @@ radio
 gps
   adsb-gps-log         log GPS fixes from the USB puck to daily track files
   adsb-geotag          back-fill receiver positions from GPS track logs
+  adsb-location        authorize + test macOS Location Services for the station
 
 database
   adsb-initdb          apply sql/ to the configured Postgres database
