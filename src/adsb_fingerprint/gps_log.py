@@ -33,6 +33,12 @@ FIELDS = [
 
 STATUS_EVERY_SECONDS = 300
 NO_FIX_EVERY_SECONDS = 30
+DRAW_EVERY_SECONDS = 0.5
+
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+RESET = "\033[0m"
 
 
 def nmea_deg(value, hemisphere):
@@ -63,11 +69,53 @@ def resolve_port(pattern):
     return matches[0] if matches else None
 
 
+class StatusLine:
+    """One self-rewriting terminal line; inert when stdout is not a TTY."""
+
+    def __init__(self):
+        self.enabled = sys.stdout.isatty()
+        self.active = False
+
+    def update(self, text):
+        if self.enabled:
+            print(f"\r{text}\033[K", end="", flush=True)
+            self.active = True
+
+    def println(self, text, file=sys.stdout):
+        """Print a regular line without leaving status-line debris."""
+        if self.active:
+            print("\r\033[K", end="", flush=True)
+            self.active = False
+        print(text, file=file)
+
+
+def format_status(have_fix, last_row, n_fixes, sats_in_view, no_fix_seconds):
+    in_view = sum(sats_in_view.values())
+    if have_fix and last_row:
+        clock = (last_row[1] or last_row[0])[11:19]
+        return (
+            f"{GREEN}fix{RESET} {clock}Z"
+            f"  {last_row[2]}, {last_row[3]}"
+            f"  alt {last_row[7] or '?'}m"
+            f"  sats {last_row[5] or '?'}/{in_view}"
+            f"  hdop {last_row[6] or '?'}"
+            f"  logged {n_fixes}"
+        )
+    state, color = ("no fix yet", YELLOW) if n_fixes == 0 else ("fix lost", RED)
+    elapsed = int(no_fix_seconds)
+    return (
+        f"{color}{state}{RESET}"
+        f"  {in_view} satellites in view"
+        f"  {elapsed // 60}m{elapsed % 60:02d}s"
+    )
+
+
 class TrackWriter:
     """Append fixes to one CSV per UTC day, rotating at midnight."""
 
-    def __init__(self, directory):
+    def __init__(self, directory, announce=print):
         self.directory = directory
+        self.announce = announce
         self.day = None
         self.handle = None
         self.writer = None
@@ -83,7 +131,7 @@ class TrackWriter:
             if fresh:
                 self.writer.writerow(FIELDS)
             self.day = day
-            print(f"track file {path}")
+            self.announce(f"track file {path}")
         self.writer.writerow(row)
         self.handle.flush()
 
@@ -116,11 +164,13 @@ def main():
     args = parser.parse_args()
 
     config.GPS_TRACK_DIR.mkdir(parents=True, exist_ok=True)
-    track = TrackWriter(config.GPS_TRACK_DIR)
+    status = StatusLine()
+    track = TrackWriter(config.GPS_TRACK_DIR, announce=status.println)
     started = time.monotonic()
     last_status = started
+    last_draw = 0.0
     no_fix_since = started
-    last_fix = None
+    last_row = None
     sats_in_view = {}
     n_fixes = 0
     rmc_date = None
@@ -134,19 +184,32 @@ def main():
         while not expired():
             port = resolve_port(args.port)
             if port is None:
-                print(f"no device matches {args.port!r} — retrying in 5 s", file=sys.stderr)
+                status.println(f"no device matches {args.port!r} — retrying in 5 s", file=sys.stderr)
                 time.sleep(5)
                 continue
             try:
                 with serial.Serial(port, 9600, timeout=2) as ser:
-                    print(f"logging {port}")
+                    status.println(f"logging {port}")
                     while not expired():
                         now = time.monotonic()
                         have_fix = no_fix_since is None
-                        interval = STATUS_EVERY_SECONDS if have_fix else NO_FIX_EVERY_SECONDS
-                        if now - last_status >= interval:
+                        if status.enabled:
+                            if now - last_draw >= DRAW_EVERY_SECONDS:
+                                status.update(
+                                    format_status(
+                                        have_fix,
+                                        last_row,
+                                        n_fixes,
+                                        sats_in_view,
+                                        0 if have_fix else now - no_fix_since,
+                                    )
+                                )
+                                last_draw = now
+                        elif now - last_status >= (
+                            STATUS_EVERY_SECONDS if have_fix else NO_FIX_EVERY_SECONDS
+                        ):
                             if have_fix:
-                                print(f"{n_fixes} fixes logged, latest {last_fix[0]}, {last_fix[1]}")
+                                print(f"{n_fixes} fixes logged, latest {last_row[2]}, {last_row[3]}")
                             else:
                                 state = "no fix yet" if n_fixes == 0 else "fix lost"
                                 elapsed = int(now - no_fix_since)
@@ -193,19 +256,19 @@ def main():
                             ]
                             track.write(row)
                             n_fixes += 1
-                            last_fix = (row[2], row[3])
+                            last_row = row
                             if args.verbose:
-                                print(",".join(row))
+                                status.println(",".join(row))
                         elif sentence == "GSV" and len(fields) > 3:
                             # One GSV group per talker (constellation); field 3
                             # counts that constellation's satellites in view.
                             if fields[3].isdigit():
                                 sats_in_view[fields[0][:2]] = int(fields[3])
             except (serial.SerialException, OSError) as err:
-                print(f"serial error: {err} — reconnecting in 5 s", file=sys.stderr)
+                status.println(f"serial error: {err} — reconnecting in 5 s", file=sys.stderr)
                 time.sleep(5)
     except KeyboardInterrupt:
         pass
     finally:
         track.close()
-    print(f"logged {n_fixes} fixes")
+    status.println(f"logged {n_fixes} fixes")
