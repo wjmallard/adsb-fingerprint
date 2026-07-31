@@ -79,6 +79,11 @@ def main():
         default=0,
         help="Stop after this many seconds (0 = run until interrupted).",
     )
+    parser.add_argument(
+        "--no-logging",
+        action="store_true",
+        help="Watch the fixes without writing track files.",
+    )
     args = parser.parse_args()
 
     if location.current_location(timeout=QUERY_TIMEOUT_S) is None:
@@ -87,11 +92,17 @@ def main():
             "(and check that Wi-Fi is on)"
         )
 
-    directory = config.GPS_WIFI_TRACK_DIR
-    directory.mkdir(parents=True, exist_ok=True)
-    writer = TrackWriter(directory)
+    writer = None
+    if not args.no_logging:
+        directory = config.GPS_WIFI_TRACK_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        writer = TrackWriter(directory)
     is_tty = sys.stdout.isatty()
-    print(f"logging every {args.interval:.0f} s")
+    print(
+        f"logging every {args.interval:.0f} s"
+        if writer
+        else f"watching every {args.interval:.0f} s (not logging)"
+    )
 
     started = time.monotonic()
     n_fixes = 0
@@ -106,14 +117,15 @@ def main():
             clock = stamp.strftime("%H:%M:%SZ")
             if fix is not None:
                 n_fixes += 1
-                writer.write(
-                    [
-                        stamp.isoformat(),
-                        f"{fix[0]:.6f}",
-                        f"{fix[1]:.6f}",
-                        f"{fix[2]:.0f}",
-                    ]
-                )
+                if writer is not None:
+                    writer.write(
+                        [
+                            stamp.isoformat(),
+                            f"{fix[0]:.6f}",
+                            f"{fix[1]:.6f}",
+                            f"{fix[2]:.0f}",
+                        ]
+                    )
             else:
                 n_misses += 1
             if is_tty:

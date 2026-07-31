@@ -267,7 +267,7 @@ class StatusLine:
         print(text, file=file)
 
 
-def format_status(have_fix, last_row, n_fixes, in_view, no_fix_seconds, no_data_seconds):
+def format_status(have_fix, last_row, n_fixes, in_view, no_fix_seconds, no_data_seconds, counter="logged"):
     """Return (state word, its color, rest of the line) as plain text."""
     if no_data_seconds >= NO_DATA_AFTER_SECONDS:
         elapsed = int(no_data_seconds)
@@ -287,7 +287,7 @@ def format_status(have_fix, last_row, n_fixes, in_view, no_fix_seconds, no_data_
             f"  {last_row[7] or '?'}m"
             f"  {sats_used}/{in_view} sats"
             f"  hdop {last_row[6] or '?'}"
-            f"  logged {n_fixes}",
+            f"  {counter} {n_fixes}",
         )
     state, color = ("no fix yet", YELLOW) if n_fixes == 0 else ("fix lost", RED)
     elapsed = int(no_fix_seconds)
@@ -344,7 +344,8 @@ class Dashboard:
         "QZ": "QZSS",
     }
 
-    def __init__(self, port_pattern):
+    def __init__(self, port_pattern, logging_off=False):
+        self.logging_off = logging_off
         self.screen = curses.initscr()
         try:
             curses.start_color()
@@ -439,7 +440,10 @@ class Dashboard:
                 put(y, x + 2, title[: max(0, w - 4)], title_attr)
 
         uptime = int(now - self.started)
-        put(0, 0, f"adsb-gps-log  {port or self.port_pattern}", dim)
+        title = f"adsb-gps-log  {port or self.port_pattern}"
+        put(0, 0, title, dim)
+        if self.logging_off:
+            put(0, len(title) + 2, "not logging", curses.color_pair(2) | curses.A_BOLD)
         put(0, max(0, width - 10), f"up {uptime // 3600}h{uptime % 3600 // 60:02d}m", dim)
 
         no_data = now - gps.last_sentence
@@ -475,7 +479,8 @@ class Dashboard:
             put(4, 2, dop)
         else:
             put(2, 2, f"last fix {(row[1] or row[0])[11:19]}Z  {row[2]}, {row[3]}", dim)
-        logged = f"logged {gps.n_fixes}"
+        counter = "fixes" if self.logging_off else "logged"
+        logged = f"{counter} {gps.n_fixes}"
         put(4, max(2, pane_w - len(logged) - 3), logged)
 
         header = f"{gps.in_view(now)} in view"
@@ -614,6 +619,11 @@ def main():
         help="Stop after this many seconds (0 = run until interrupted).",
     )
     parser.add_argument(
+        "--no-logging",
+        action="store_true",
+        help="Watch the receiver without writing track files.",
+    )
+    parser.add_argument(
         "--plain",
         action="store_true",
         help="One-line status instead of the full-screen dashboard.",
@@ -648,7 +658,7 @@ def main():
         try:
             curses.setupterm()
             if curses.tigetstr("cup") is not None:
-                dash = Dashboard(args.port)
+                dash = Dashboard(args.port, logging_off=args.no_logging)
         except Exception:
             dash = None
     status = StatusLine()
@@ -660,6 +670,8 @@ def main():
             status.println(text, file=sys.stderr if err else sys.stdout)
 
     track = TrackWriter(config.GPS_TRACK_DIR, announce=emit)
+    if args.no_logging:
+        emit("not logging — fixes are displayed but no track file is written")
     started = time.monotonic()
     gps = GpsState(started)
     last_status = started
@@ -711,6 +723,7 @@ def main():
                                         gps.in_view(now),
                                         0 if have_fix else now - gps.no_fix_since,
                                         no_data,
+                                        "fixes" if args.no_logging else "logged",
                                     )
                                 )
                                 last_draw = now
@@ -726,8 +739,9 @@ def main():
                                     f"{elapsed // 60}m{elapsed % 60:02d}s elapsed"
                                 )
                             elif have_fix:
+                                verb = "seen" if args.no_logging else "logged"
                                 print(
-                                    f"{gps.n_fixes} fixes logged, "
+                                    f"{gps.n_fixes} fixes {verb}, "
                                     f"latest {gps.last_row[2]}, {gps.last_row[3]}"
                                 )
                             else:
@@ -744,7 +758,8 @@ def main():
                         fields = line[1:].partition("*")[0].split(",")
                         row = gps.feed(fields, time.monotonic())
                         if row:
-                            track.write(row)
+                            if not args.no_logging:
+                                track.write(row)
                             if args.verbose and not dash:
                                 status.println(",".join(row))
             except (serial.SerialException, OSError) as err:
@@ -759,7 +774,12 @@ def main():
         track.close()
         if dash:
             dash.close()
+    summary = (
+        f"saw {gps.n_fixes} fixes (not logged)"
+        if args.no_logging
+        else f"logged {gps.n_fixes} fixes"
+    )
     if dash:
-        print(f"logged {gps.n_fixes} fixes")
+        print(summary)
     else:
-        status.println(f"logged {gps.n_fixes} fixes")
+        status.println(summary)
