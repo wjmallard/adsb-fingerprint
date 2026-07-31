@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import yaml
+from pyModeS import PipeDecoder
 
 from adsb_fingerprint import config, db, modes
 from adsb_fingerprint.capture import TUNERS, _apply_gain
@@ -189,7 +190,9 @@ def collect(
     applied_gain = _apply_gain(device, gain)
     tuner = TUNERS.get(device.get_tuner_type(), "unknown")
 
-    reference = (config.RECEIVER_LAT, config.RECEIVER_LON)
+    # Stateful decoder: positions resolve from each aircraft's own CPR frame
+    # pairs, so collection needs no receiver location — it works anywhere.
+    pipe = PipeDecoder()
     started = datetime.now(timezone.utc)
     session = session or started.strftime("%Y%m%dT%H%M%SZ")
     session_dir = config.CAPTURE_DIR / session
@@ -313,7 +316,7 @@ def collect(
                     continue
                 stats["maxq"] = max(stats["maxq"], block_queue.qsize())
                 buf = np.concatenate([carry, block])
-                for msg in modes.detect_messages(buf, sample_rate_hz, reference=reference):
+                for msg in modes.detect_messages(buf, sample_rate_hz):
                     offset = msg["sample_offset"]
                     if offset + WINDOW > len(buf):
                         continue
@@ -324,6 +327,13 @@ def collect(
                     icao = msg["icao"]
                     n_detected += 1
                     stamp = started + timedelta(seconds=abs_off / sample_rate_hz)
+                    msg.update(
+                        modes.decode_message(
+                            pipe,
+                            msg["hex"],
+                            abs_off / sample_rate_hz,
+                        ),
+                    )
                     track_state(state, dirty, icao, stamp, msg)
                     if icao not in seen:
                         seen.add(icao)

@@ -58,10 +58,16 @@ def index_capture(conn, sidecar_path, reindex=False):
     sample_rate = meta["sample_rate_hz"]
     started = datetime.fromisoformat(meta["captured_at"])
     session = meta["session"]
-    reference = (config.RECEIVER_LAT, config.RECEIVER_LON)
     n_samples = int(round(modes.MESSAGE_US * sample_rate / 1e6))
 
     iq = np.fromfile(data_path, dtype=np.complex64)
+    detected = list(modes.detect_messages(iq, sample_rate))
+    # Batch decode: positions resolve from each aircraft's own CPR pairs
+    # (no receiver reference), retro-filling bootstrap-held fixes.
+    decoded = modes.decode_batch(
+        [msg["hex"] for msg in detected],
+        [msg["sample_offset"] / sample_rate for msg in detected],
+    )
     rows = [
         (
             rel,
@@ -75,15 +81,15 @@ def index_capture(conn, sidecar_path, reindex=False):
             True,
             msg["rssi_db"],
             msg["hex"],
-            msg.get("altitude_ft"),
-            msg.get("latitude"),
-            msg.get("longitude"),
-            msg.get("callsign"),
-            msg.get("ground_speed"),
-            msg.get("track"),
-            msg.get("vertical_rate"),
+            fields["altitude_ft"],
+            fields["latitude"],
+            fields["longitude"],
+            fields["callsign"],
+            fields["ground_speed"],
+            fields["track"],
+            fields["vertical_rate"],
         )
-        for msg in modes.detect_messages(iq, sample_rate, reference=reference)
+        for msg, fields in zip(detected, decoded)
     ]
 
     conn.execute("delete from messages where capture_file = %(f)s", {"f": rel})

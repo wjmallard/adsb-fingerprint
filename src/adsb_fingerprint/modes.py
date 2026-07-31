@@ -1,10 +1,15 @@
 """Mode S / ADS-B detection and demodulation from complex IQ.
 
 Finds DF17/DF18 extended-squitter preambles by magnitude correlation,
-PPM-demodulates each candidate on an oversampled grid, keeps the ones that pass
-the pyModeS CRC, and decodes their fields (altitude, position, callsign,
-velocity). The CRC is the real filter, so the preamble detector is deliberately
-permissive.
+PPM-demodulates each candidate on an oversampled grid, and keeps the ones that
+pass the pyModeS CRC. The CRC is the real filter, so the preamble detector is
+deliberately permissive.
+
+Field decoding (decode_message / decode_batch) is receiver-blind: positions
+resolve from each aircraft's own even/odd CPR frame pairs via a stateful
+pyModeS PipeDecoder — validated against the aircraft's motion history — so no
+receiver reference is needed anywhere, and the station can be anywhere on
+Earth without configuration.
 """
 
 import numpy as np
@@ -43,13 +48,8 @@ def _demod(mag, start, spb):
     return _bits_to_hex(bits)
 
 
-def _decode(msg, reference):
-    # pyModeS v3: one decode() call returns whatever fields this message type
-    # carries. Position needs a receiver reference; everything else doesn't.
-    try:
-        info = pms.decode(msg, reference=reference) if reference else pms.decode(msg)
-    except Exception:
-        return {}
+def _fields(info):
+    """Map a pyModeS Decoded dict onto the messages-table field names."""
     callsign = (info.get("callsign") or "").strip().rstrip("_") or None
     return {
         "altitude_ft": info.get("altitude"),
@@ -62,12 +62,40 @@ def _decode(msg, reference):
     }
 
 
-def detect_messages(iq, sample_rate, reference=None):
+def decode_message(pipe, msg, timestamp):
+    """Decode one validated message's fields through a stateful pipe.
+
+    pipe is a pyModeS PipeDecoder and timestamp its clock in seconds (any
+    epoch, monotonic across calls). An aircraft's even/odd CPR pair gives an
+    absolute fix — held until motion-consistent — and its later single frames
+    resolve against its own last accepted position, so the first few position
+    frames per aircraft come back without lat/lon while its track bootstraps.
+    Feed messages deduplicated and in time order.
+    """
+    try:
+        info = pipe.decode(msg, timestamp=timestamp)
+    except Exception:
+        return {}
+    return _fields(info)
+
+
+def decode_batch(msgs, timestamps):
+    """Decode a finished recording's messages in one pass.
+
+    Batch mode (a transient PipeDecoder) retro-fills the positions that
+    streaming would hold during each aircraft's bootstrap, so every
+    resolvable fix comes back.
+    """
+    return [_fields(info) for info in pms.decode(msgs, timestamps=timestamps)]
+
+
+def detect_messages(iq, sample_rate):
     """Yield validated DF17/DF18 messages found in complex IQ.
 
-    Each result is a dict: sample_offset, df, icao, type_code, hex, rssi_db, and
-    the decoded fields (altitude_ft, latitude, longitude, callsign, ...).
-    reference is the receiver (lat, lon), required to resolve position.
+    Each result is a dict: sample_offset, df, icao, type_code, hex, rssi_db.
+    Field decoding is the caller's job (decode_message / decode_batch), so the
+    stateful position pipeline sees each message exactly once, in time order,
+    after any cross-buffer deduplication.
 
     DF18 with CF >= 2 (TIS-B and ADS-R) is dropped: those frames come from an
     FAA ground station's radio under another party's address, so they can never
@@ -122,6 +150,5 @@ def detect_messages(iq, sample_rate, reference=None):
                     "type_code": int(hex2bin(msg)[32:37], 2),
                     "hex": msg,
                     "rssi_db": 20.0 * np.log10(level) if level > 0 else None,
-                    **_decode(msg, reference),
                 }
                 break
