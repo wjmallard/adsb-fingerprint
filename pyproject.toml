@@ -20,6 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
+adsb = "adsb_fingerprint.cli:main"
 adsb-capture = "adsb_fingerprint.capture:main"
 adsb-collect = "adsb_fingerprint.collect:main"
 adsb-dataset = "adsb_fingerprint.dataset:main"
