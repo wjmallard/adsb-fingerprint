@@ -40,6 +40,7 @@ RECEIVER_LON = float(_receiver["longitude"]) if "longitude" in _receiver else No
 _gps = _config.get("gps", {})
 GPS_PORT = _gps.get("port", "/dev/cu.usbmodem*")
 GPS_TRACK_DIR = Path(_gps.get("tracks", "~/radio-classifier-data/gps/tracks")).expanduser()
+GPS_WIFI_TRACK_DIR = Path(_gps.get("wifi_tracks", "~/radio-classifier-data/gps/wifi-tracks")).expanduser()
 
 _server = _config.get("server", {})
 SERVER_HOST = _server.get("host", "127.0.0.1")

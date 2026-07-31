@@ -13,6 +13,7 @@ import argparse
 import bisect
 import csv
 from datetime import datetime
+from pathlib import Path
 
 from tqdm import tqdm
 
@@ -27,10 +28,12 @@ def parse_when(text):
     return when
 
 
-def load_fixes(start_epoch, end_epoch):
+def load_fixes(start_epoch, end_epoch, directory=None):
     """Timestamped (epoch, lat, lon) fixes overlapping the target range."""
     fixes = []
-    for path in sorted(config.GPS_TRACK_DIR.glob("*.csv")):
+    if directory is None:
+        directory = config.GPS_TRACK_DIR
+    for path in sorted(directory.glob("*.csv")):
         with path.open(newline="") as handle:
             for row in csv.DictReader(handle):
                 epoch = datetime.fromisoformat(row["host_utc"]).timestamp()
@@ -87,6 +90,14 @@ def main():
         help="Bridge track gaps up to this many seconds (default: 30).",
     )
     parser.add_argument(
+        "--tracks",
+        default=None,
+        help=(
+            "Track directory to read (default: the puck's gps.tracks; "
+            "point at gps.wifi_tracks for Location Services tracks)."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Report what would change without updating the database.",
@@ -133,7 +144,11 @@ def main():
 
         first = rows[0]["captured_at"].timestamp()
         last = rows[-1]["captured_at"].timestamp()
-        fixes = load_fixes(first - args.max_gap, last + args.max_gap)
+        fixes = load_fixes(
+            first - args.max_gap,
+            last + args.max_gap,
+            directory=Path(args.tracks).expanduser() if args.tracks else None,
+        )
         print(f"{len(rows)} messages, {len(fixes)} track fixes in range")
         if not fixes:
             raise SystemExit("no track fixes overlap the target range")

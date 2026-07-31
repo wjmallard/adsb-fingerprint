@@ -39,6 +39,9 @@ gps:
   # adsb-gps-log writes one CSV of timestamped fixes per UTC day here;
   # adsb-geotag reads them back to position mobile sessions.
   tracks: ~/radio-classifier-data/gps/tracks
+  # adsb-location-log writes Wi-Fi (Location Services) fixes here — the
+  # indoors-reliable twin of the puck tracks (adsb-geotag --tracks).
+  wifi_tracks: ~/radio-classifier-data/gps/wifi-tracks
 
 server:
   host: 127.0.0.1
