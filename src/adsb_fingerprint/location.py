@@ -46,10 +46,18 @@ def current_location(timeout=FIX_TIMEOUT_S):
     if manager.authorizationStatus() == kCLAuthorizationStatusNotDetermined:
         # The explicit request is what raises the one-time permission
         # prompt (attributed to the hosting terminal app) — merely
-        # starting updates no longer does on current macOS. Leave a
-        # human at the screen time to answer it.
+        # starting updates no longer does on current macOS. Some macOS
+        # versions never show a dialog for CLI tools at all and only
+        # register the terminal in the Location Services list, so say
+        # what's happening instead of appearing to hang.
         manager.requestWhenInUseAuthorization()
         prompted = True
+        print(
+            "location services: asking macOS for permission — approve the "
+            "prompt if one appears; if none does, enable this terminal under "
+            "System Settings -> Privacy & Security -> Location Services "
+            f"(waiting up to {PROMPT_TIMEOUT_S:.0f} s)"
+        )
     manager.startUpdatingLocation()
     try:
         deadline = time.monotonic() + (PROMPT_TIMEOUT_S if prompted else timeout)
