@@ -39,7 +39,7 @@ import numpy as np
 import yaml
 from pyModeS import PipeDecoder
 
-from adsb_fingerprint import config, db, gps_log, location, modes
+from adsb_fingerprint import config, db, location, log_gps, modes
 from adsb_fingerprint.capture import TUNERS, _apply_gain
 
 BLOCK = 131072           # samples per read (~55 ms at 2.4 MSPS); multiple of 512
@@ -308,7 +308,7 @@ def collect(
     estimator = StationEstimator()
     station_final = False
     station = None
-    gps = gps_log.latest_fix()
+    gps = log_gps.latest_fix()
     if gps is not None:
         station = (gps[0], gps[1], "gps")
         print(

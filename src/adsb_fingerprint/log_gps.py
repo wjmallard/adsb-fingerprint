@@ -440,7 +440,7 @@ class Dashboard:
                 put(y, x + 2, title[: max(0, w - 4)], title_attr)
 
         uptime = int(now - self.started)
-        title = f"adsb-gps-log  {port or self.port_pattern}"
+        title = f"adsb-log-gps  {port or self.port_pattern}"
         put(0, 0, title, dim)
         if self.logging_off:
             put(0, len(title) + 2, "not logging", curses.color_pair(2) | curses.A_BOLD)

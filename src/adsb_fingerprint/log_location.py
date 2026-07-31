@@ -1,6 +1,6 @@
-"""adsb-location-log: log Location Services fixes to daily track files.
+"""adsb-log-location: log Location Services fixes to daily track files.
 
-The Wi-Fi twin of adsb-gps-log: one row per interval from the laptop's
+The Wi-Fi twin of adsb-log-gps: one row per interval from the laptop's
 own position — reliable indoors where the puck sees no sky, coarser
 (±tens of meters) where the puck is sharp. One CSV per UTC day in its
 own directory (gps.wifi_tracks) so provenance stays obvious next to the
