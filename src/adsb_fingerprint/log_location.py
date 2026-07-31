@@ -6,7 +6,7 @@ own position — reliable indoors where the puck sees no sky, coarser
 own directory (gps.wifi_tracks) so provenance stays obvious next to the
 puck tracks; the shared host_utc/latitude/longitude columns mean
 adsb-geotag interpolates either kind via --tracks. Needs the one-time
-Location Services grant: run adsb-location first.
+Location Services grant: run adsb-auth-location first.
 """
 
 import argparse
@@ -88,7 +88,7 @@ def main():
 
     if location.current_location(timeout=QUERY_TIMEOUT_S) is None:
         raise SystemExit(
-            "no Location Services fix — run adsb-location once to authorize "
+            "no Location Services fix — run adsb-auth-location once to authorize "
             "(and check that Wi-Fi is on)"
         )
 

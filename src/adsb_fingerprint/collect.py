@@ -325,7 +325,7 @@ def collect(
             )
         else:
             print(
-                "no live gps track and no location services fix (adsb-location "
+                "no live gps track and no location services fix (adsb-auth-location "
                 "authorizes the latter) — station will be estimated from traffic"
             )
     started = datetime.now(timezone.utc)

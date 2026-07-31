@@ -12,9 +12,11 @@ processes without a usage description, which an interpreter can never
 carry — a bare python request raises no dialog and registers nothing —
 and locationd keys authorization off bundle identity. The helper
 appears as "adsb-location" in System Settings -> Privacy & Security ->
-Location Services; `adsb-location` (main below) walks the one-time
+Location Services; `adsb-auth-location` (main below) walks the one-time
 authorization dance interactively, while the collector's startup query
-stays quiet and bounded.
+stays quiet and bounded. The bundle identity (and so the Settings entry
+name) deliberately stays "adsb-location" whatever the console script is
+called — the granted authorization is keyed to it.
 
 The pyobjc path (darwin-marked dependency, lazily imported) remains as
 a fallback for environments without the Swift toolchain where python

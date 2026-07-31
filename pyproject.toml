@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 adsb = "adsb_fingerprint.cli:main"
+adsb-auth-location = "adsb_fingerprint.location:main"
 adsb-capture = "adsb_fingerprint.capture:main"
 adsb-collect = "adsb_fingerprint.collect:main"
 adsb-dataset = "adsb_fingerprint.dataset:main"
@@ -33,7 +34,6 @@ adsb-info = "adsb_fingerprint.info:main"
 adsb-ingest-faa = "adsb_fingerprint.ingest_faa:main"
 adsb-ingest-opensky = "adsb_fingerprint.ingest_opensky:main"
 adsb-initdb = "adsb_fingerprint.db:main"
-adsb-location = "adsb_fingerprint.location:main"
 adsb-log-gps = "adsb_fingerprint.log_gps:main"
 adsb-log-location = "adsb_fingerprint.log_location:main"
 adsb-predict = "adsb_fingerprint.predict:main"
