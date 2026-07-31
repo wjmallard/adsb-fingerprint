@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>net.wjmallard.adsb-location</string>
+    <key>CFBundleName</key>
+    <string>adsb-location</string>
+    <key>CFBundleDisplayName</key>
+    <string>adsb-location</string>
+    <key>CFBundleExecutable</key>
+    <string>adsb-location-helper</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSLocationUsageDescription</key>
+    <string>Locates the ADS-B receiving station for position decoding and geotagging.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Locates the ADS-B receiving station for position decoding and geotagging.</string>
+</dict>
+</plist>

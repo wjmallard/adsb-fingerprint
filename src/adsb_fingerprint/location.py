@@ -1,38 +1,110 @@
 """Query macOS Location Services for the laptop's own position.
 
 Wi-Fi positioning works indoors where a GPS puck sees no sky, and the
-laptop running the collector is always present — so this is the live
+laptop running the collector is always present — so this is a live
 first guess for the station's whereabouts, cross-checked against the
 traffic estimate before anything final trusts it (see adsb-collect).
 
-Authorization is one-time per terminal app but awkward: recent macOS
-often shows no dialog for CLI tools — the request just registers the
-terminal in System Settings -> Privacy & Security -> Location Services
-for the user to enable by hand. `adsb-location` (main below) exists to
-walk that dance: it fires the request, narrates the authorization state
-as it changes, and prints the fix the moment the grant lands. The
-collector's own startup query stays quiet and bounded instead.
+The asking is delegated to a tiny Swift helper compiled on first use
+(location_helper.swift, Info.plist embedded, ad-hoc signed): macOS
+ignores authorization requests from binaries without an embedded usage
+description, which an interpreter can never carry — a bare python
+request raises no dialog and registers nothing. The helper appears as
+"adsb-location" in System Settings -> Privacy & Security -> Location
+Services; `adsb-location` (main below) walks the one-time authorization
+dance interactively, while the collector's startup query stays quiet
+and bounded.
 
-macOS-only by nature: pyobjc is a darwin-marked dependency, and its
-import here is deliberately lazy so the rest of the package works
-without it.
+The pyobjc path (darwin-marked dependency, lazily imported) remains as
+a fallback for environments without the Swift toolchain where python
+itself has somehow been granted access.
 """
 
 import argparse
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 FIX_TIMEOUT_S = 8.0      # give CoreLocation this long to produce a fix
 FIX_MAX_AGE_S = 60.0     # ignore cached fixes older than this
 PROMPT_TIMEOUT_S = 30.0  # give a human this long to answer the one-time prompt
 
 
+def _helper_path():
+    """Path to the compiled helper, building it on first use (or None).
+
+    Built into the environment's bin directory beside the console
+    scripts; rebuilt whenever the source or embedded plist is newer.
+    None when the Swift toolchain is unavailable.
+    """
+    helper = Path(sys.prefix) / "bin" / "adsb-location-helper"
+    source = Path(__file__).with_name("location_helper.swift")
+    plist = Path(__file__).with_name("location_helper.plist")
+    fresh = max(source.stat().st_mtime, plist.stat().st_mtime)
+    if helper.exists() and helper.stat().st_mtime >= fresh:
+        return helper
+    try:
+        subprocess.run(
+            [
+                "xcrun",
+                "swiftc",
+                "-swift-version", "5",
+                "-O",
+                str(source),
+                "-o", str(helper),
+                "-Xlinker", "-sectcreate",
+                "-Xlinker", "__TEXT",
+                "-Xlinker", "__info_plist",
+                "-Xlinker", str(plist),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        subprocess.run(
+            ["codesign", "--force", "--sign", "-", str(helper)],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception:
+        return None
+    return helper
+
+
 def current_location(timeout=FIX_TIMEOUT_S):
     """The laptop's (latitude, longitude, accuracy_m), or None.
 
-    None covers every unavailable case alike: pyobjc not installed,
-    location services off or denied for this terminal, or no fresh fix
-    inside the timeout.
+    None covers every unavailable case alike: no way to ask (toolchain
+    and pyobjc both missing), location services off or not authorized,
+    or no fresh fix inside the timeout.
     """
+    helper = _helper_path()
+    if helper is not None:
+        try:
+            result = subprocess.run(
+                [str(helper), str(timeout)],
+                capture_output=True,
+                text=True,
+                timeout=max(timeout, PROMPT_TIMEOUT_S) + 15,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            latitude, longitude, accuracy = (float(v) for v in result.stdout.split())
+        except ValueError:
+            return None
+        return latitude, longitude, accuracy
+    return _pyobjc_location(timeout)
+
+
+def _pyobjc_location(timeout):
+    """In-process CoreLocation query — works only if python itself is
+    somehow authorized; its requests raise no prompt (no embedded usage
+    description), so this is strictly a fallback."""
     try:
         from CoreLocation import (
             CLLocationManager,
@@ -50,20 +122,8 @@ def current_location(timeout=FIX_TIMEOUT_S):
     manager = CLLocationManager.alloc().init()
     prompted = False
     if manager.authorizationStatus() == kCLAuthorizationStatusNotDetermined:
-        # The explicit request is what raises the one-time permission
-        # prompt (attributed to the hosting terminal app) — merely
-        # starting updates no longer does on current macOS. Some macOS
-        # versions never show a dialog for CLI tools at all and only
-        # register the terminal in the Location Services list, so say
-        # what's happening instead of appearing to hang.
         manager.requestWhenInUseAuthorization()
         prompted = True
-        print(
-            "location services: asking macOS for permission — approve the "
-            "prompt if one appears; if none does, enable this terminal under "
-            "System Settings -> Privacy & Security -> Location Services "
-            f"(waiting up to {PROMPT_TIMEOUT_S:.0f} s)"
-        )
     manager.startUpdatingLocation()
     try:
         deadline = time.monotonic() + (PROMPT_TIMEOUT_S if prompted else timeout)
@@ -76,7 +136,6 @@ def current_location(timeout=FIX_TIMEOUT_S):
             ):
                 return None
             if prompted and status != kCLAuthorizationStatusNotDetermined:
-                # Prompt answered — the fix itself gets the normal window.
                 deadline = time.monotonic() + timeout
                 prompted = False
             fix = manager.location()
@@ -95,16 +154,6 @@ def current_location(timeout=FIX_TIMEOUT_S):
     return None
 
 
-def _status_name(status):
-    return {
-        0: "undetermined",
-        1: "restricted",
-        2: "denied",
-        3: "authorized (always)",
-        4: "authorized",
-    }.get(status, f"unknown ({status})")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Authorize and test macOS Location Services for the station position.",
@@ -117,66 +166,32 @@ def main():
     )
     args = parser.parse_args()
 
+    helper = _helper_path()
+    if helper is None:
+        raise SystemExit(
+            "could not build the location helper — the Swift toolchain is "
+            "needed (xcode-select --install). Without it, python itself "
+            "cannot be granted location access."
+        )
+    print(
+        'asking macOS for a fix — approve the dialog if one appears; if none\n'
+        'does, enable "adsb-location" under System Settings -> Privacy &\n'
+        'Security -> Location Services (the entry exists once the request fires)'
+    )
     try:
-        from CoreLocation import (
-            CLLocationManager,
-            kCLAuthorizationStatusDenied,
-            kCLAuthorizationStatusNotDetermined,
-            kCLAuthorizationStatusRestricted,
+        result = subprocess.run(
+            [str(helper), str(args.timeout)],
+            stdout=subprocess.PIPE,
+            text=True,
         )
-        from Foundation import (
-            NSDate,
-            NSRunLoop,
-        )
-    except ImportError:
-        raise SystemExit("pyobjc is not installed — Location Services is macOS-only")
-
-    manager = CLLocationManager.alloc().init()
-    status = manager.authorizationStatus()
-    print(f"authorization: {_status_name(status)}")
-    if status == kCLAuthorizationStatusNotDetermined:
-        manager.requestWhenInUseAuthorization()
-        print(
-            "requested — approve the macOS dialog if one appears. On recent\n"
-            "macOS none does: this terminal instead appears under\n"
-            "System Settings -> Privacy & Security -> Location Services\n"
-            "within a few seconds — toggle it on there. Waiting..."
-        )
-    manager.startUpdatingLocation()
-
-    runloop = NSRunLoop.currentRunLoop()
-    deadline = time.monotonic() + args.timeout
-    try:
-        while time.monotonic() < deadline:
-            now_status = manager.authorizationStatus()
-            if now_status != status:
-                status = now_status
-                print(f"authorization: {_status_name(status)}")
-            if status in (
-                kCLAuthorizationStatusDenied,
-                kCLAuthorizationStatusRestricted,
-            ):
-                raise SystemExit(
-                    "denied — enable this terminal under System Settings -> "
-                    "Privacy & Security -> Location Services, then rerun"
-                )
-            fix = manager.location()
-            if fix is not None and fix.horizontalAccuracy() >= 0:
-                age = -fix.timestamp().timeIntervalSinceNow()
-                stale = f", {age:.0f} s old" if age > FIX_MAX_AGE_S else ""
-                coordinate = fix.coordinate()
-                print(
-                    f"fix: {coordinate.latitude:.5f}, {coordinate.longitude:.5f} "
-                    f"(±{fix.horizontalAccuracy():.0f} m{stale})"
-                )
-                print("authorized — adsb-collect picks this up at every launch now.")
-                return
-            runloop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.2))
-        raise SystemExit(f"no fix within {args.timeout:.0f} s")
     except KeyboardInterrupt:
         raise SystemExit("\nstopped")
-    finally:
-        manager.stopUpdatingLocation()
+    if result.returncode == 0:
+        latitude, longitude, accuracy = (float(v) for v in result.stdout.split())
+        print(f"fix: {latitude:.5f}, {longitude:.5f} (±{accuracy:.0f} m)")
+        print("authorized — adsb-collect picks this up at every launch now.")
+        return
+    raise SystemExit("no fix — see the guidance above, then rerun")
 
 
 if __name__ == "__main__":
