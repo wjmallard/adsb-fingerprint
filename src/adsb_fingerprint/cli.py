@@ -8,6 +8,7 @@ radio
   adsb-collect         stream the SDR, persist only detected Mode S snippets
   adsb-capture         stream raw IQ into timestamped .cf32 files
   adsb-index           (re)detect messages in captures and fill the index
+  adsb-redecode        re-decode stored positions from raw message hex
 
 gps
   adsb-gps-log         log GPS fixes from the USB puck to daily track files
