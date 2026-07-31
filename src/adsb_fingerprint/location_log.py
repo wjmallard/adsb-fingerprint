@@ -131,9 +131,9 @@ def main():
             if is_tty:
                 line = (
                     f"{GREEN}fix{RESET}  {clock}  {fix[0]:.6f}, {fix[1]:.6f}  "
-                    f"±{fix[2]:.0f} m · {n_fixes} rows"
+                    f"±{fix[2]:.0f} m · {n_fixes} fixes"
                     if fix is not None
-                    else f"{RED}no fix{RESET}  {clock} · {n_fixes} rows"
+                    else f"{RED}no fix{RESET}  {clock} · {n_fixes} fixes"
                 )
                 sys.stdout.write(f"\033[2K\r{line}")
                 sys.stdout.flush()
@@ -148,11 +148,13 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        writer.close()
+        if writer is not None:
+            writer.close()
     if is_tty:
         print()
     elapsed = time.monotonic() - started
-    print(f"logged {n_fixes} fixes ({n_misses} misses) in {elapsed:.0f} s")
+    verb = "watched" if args.no_logging else "logged"
+    print(f"{verb} {n_fixes} fixes ({n_misses} misses) in {elapsed:.0f} s")
 
 
 if __name__ == "__main__":
