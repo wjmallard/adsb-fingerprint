@@ -17,6 +17,7 @@ import time
 
 FIX_TIMEOUT_S = 8.0      # give CoreLocation this long to produce a fix
 FIX_MAX_AGE_S = 60.0     # ignore cached fixes older than this
+PROMPT_TIMEOUT_S = 30.0  # give a human this long to answer the one-time prompt
 
 
 def current_location(timeout=FIX_TIMEOUT_S):
@@ -30,6 +31,7 @@ def current_location(timeout=FIX_TIMEOUT_S):
         from CoreLocation import (
             CLLocationManager,
             kCLAuthorizationStatusDenied,
+            kCLAuthorizationStatusNotDetermined,
             kCLAuthorizationStatusRestricted,
         )
         from Foundation import (
@@ -40,18 +42,29 @@ def current_location(timeout=FIX_TIMEOUT_S):
         return None
 
     manager = CLLocationManager.alloc().init()
-    # Starting updates is also what raises the one-time permission
-    # prompt while authorization is still undetermined.
+    prompted = False
+    if manager.authorizationStatus() == kCLAuthorizationStatusNotDetermined:
+        # The explicit request is what raises the one-time permission
+        # prompt (attributed to the hosting terminal app) — merely
+        # starting updates no longer does on current macOS. Leave a
+        # human at the screen time to answer it.
+        manager.requestWhenInUseAuthorization()
+        prompted = True
     manager.startUpdatingLocation()
     try:
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + (PROMPT_TIMEOUT_S if prompted else timeout)
         runloop = NSRunLoop.currentRunLoop()
         while time.monotonic() < deadline:
-            if manager.authorizationStatus() in (
+            status = manager.authorizationStatus()
+            if status in (
                 kCLAuthorizationStatusDenied,
                 kCLAuthorizationStatusRestricted,
             ):
                 return None
+            if prompted and status != kCLAuthorizationStatusNotDetermined:
+                # Prompt answered — the fix itself gets the normal window.
+                deadline = time.monotonic() + timeout
+                prompted = False
             fix = manager.location()
             if fix is not None and fix.horizontalAccuracy() >= 0:
                 age = -fix.timestamp().timeIntervalSinceNow()

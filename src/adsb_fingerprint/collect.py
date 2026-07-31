@@ -315,7 +315,11 @@ def collect(
         )
     else:
         station = None
-        print("location services: no fix — station will be estimated from traffic")
+        print(
+            "location services: no fix (not yet approved for this terminal? "
+            "System Settings -> Privacy & Security -> Location Services) — "
+            "station will be estimated from traffic"
+        )
     started = datetime.now(timezone.utc)
     session = session or started.strftime("%Y%m%dT%H%M%SZ")
     session_dir = config.CAPTURE_DIR / session
