@@ -402,28 +402,40 @@ class Dashboard:
         # it in view — GSA lists bare PRNs, so a cross-constellation
         # collision would be a guess.
         seen_in = {}
+        table = []
         for talker, svs in gps.sats.items():
-            for prn in svs:
+            for prn, (elev, azim, snr, seen) in svs.items():
                 seen_in[prn] = seen_in.get(prn, 0) + 1
+                table.append((talker, prn, elev, azim, snr))
+        table.sort(key=lambda sat: (sat[4] is None, -(sat[4] or 0), sat[0], sat[1]))
+
+        def angle(value):
+            return int(value) if value.isdigit() else "-"
 
         y = 7
-        for talker in sorted(gps.sats):
-            if y >= height - 1:
-                break
-            put(y, 0, f"{self.NAMES.get(talker, talker):<6}", dim)
-            x = 7
-            ranked = sorted(
-                gps.sats[talker].items(),
-                key=lambda item: -1 if item[1][2] is None else item[1][2],
-                reverse=True,
+        if table:
+            put(y, 0, f"{'':<6} {'prn':>3}  {'el':>3}  {'az':>3}  {'snr':>3}", dim)
+            y += 1
+        reserve = 6 if height >= 20 else 3
+        max_rows = max(1, height - y - reserve)
+        for talker, prn, elev, azim, snr in table[:max_rows]:
+            used = prn in gps.used and seen_in.get(prn) == 1
+            attr = green if used else (dim if snr is None else 0)
+            bar = "#" * min(10, (snr or 0) // 5)
+            put(
+                y,
+                0,
+                f"{self.NAMES.get(talker, talker):<6}"
+                f" {prn:>3}"
+                f"  {angle(elev):>3}"
+                f"  {angle(azim):>3}"
+                f"  {snr if snr is not None else '-':>3}"
+                f"  {bar}",
+                attr,
             )
-            for prn, (elev, azim, snr, seen) in ranked:
-                token = f"{prn:02d}:{snr if snr is not None else '-'}"
-                used = prn in gps.used and seen_in.get(prn) == 1
-                put(y, x, token, green if used else 0)
-                x += len(token) + 2
-                if x >= width:
-                    break
+            y += 1
+        if len(table) > max_rows:
+            put(y, 0, f"+{len(table) - max_rows} more", dim)
             y += 1
 
         room = height - (y + 2)
