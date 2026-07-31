@@ -15,6 +15,7 @@ periodic heartbeat prints.
 import argparse
 import csv
 import curses
+import math
 import os
 import sys
 import time
@@ -315,6 +316,7 @@ class Dashboard:
             raise
         self.port_pattern = port_pattern
         self.events = deque(maxlen=20)
+        self.paused = False
         self.started = time.monotonic()
 
     def event(self, text):
@@ -336,6 +338,25 @@ class Dashboard:
                 break
             if key == curses.KEY_RESIZE:
                 curses.update_lines_cols()
+            elif key in (ord("q"), ord("Q")):
+                return "quit"
+            elif key in (ord("p"), ord("P")):
+                self.paused = not self.paused
+                if self.paused:
+                    _, width = self.screen.getmaxyx()
+                    try:
+                        self.screen.addnstr(
+                            0,
+                            max(0, width // 2 - 8),
+                            " display paused ",
+                            max(1, width - 1),
+                            curses.color_pair(2) | curses.A_BOLD,
+                        )
+                    except curses.error:
+                        pass
+                    self.screen.refresh()
+        if self.paused:
+            return None
         self.screen.erase()
         height, width = self.screen.getmaxyx()
 
@@ -346,11 +367,29 @@ class Dashboard:
                 except curses.error:
                     pass
 
+        def edge(piece, *pieceargs):
+            try:
+                piece(*pieceargs)
+            except curses.error:
+                pass
+
         bold = curses.A_BOLD
         dim = curses.A_DIM
         green = curses.color_pair(1) | bold
         yellow = curses.color_pair(2) | bold
         red = curses.color_pair(3) | bold
+
+        def frame(y, x, h, w, title="", title_attr=bold):
+            edge(self.screen.hline, y, x + 1, curses.ACS_HLINE | dim, w - 2)
+            edge(self.screen.hline, y + h - 1, x + 1, curses.ACS_HLINE | dim, w - 2)
+            edge(self.screen.vline, y + 1, x, curses.ACS_VLINE | dim, h - 2)
+            edge(self.screen.vline, y + 1, x + w - 1, curses.ACS_VLINE | dim, h - 2)
+            edge(self.screen.addch, y, x, curses.ACS_ULCORNER | dim)
+            edge(self.screen.addch, y, x + w - 1, curses.ACS_URCORNER | dim)
+            edge(self.screen.addch, y + h - 1, x, curses.ACS_LLCORNER | dim)
+            edge(self.screen.addch, y + h - 1, x + w - 1, curses.ACS_LRCORNER | dim)
+            if title:
+                put(y, x + 2, title[: max(0, w - 4)], title_attr)
 
         uptime = int(now - self.started)
         put(0, 0, f"adsb-gps-log  {port or self.port_pattern}", dim)
@@ -361,11 +400,11 @@ class Dashboard:
         fresh_gsa = now - gps.fix_seen < NO_DATA_AFTER_SECONDS
         if port is None:
             state, attr = "no device", red
-            detail = "replug the puck — retrying every 5 s"
+            detail = "replug the puck - retrying every 5 s"
         elif no_data >= NO_DATA_AFTER_SECONDS:
             elapsed = int(no_data)
             state, attr = "no data from device", red
-            detail = f"{elapsed // 60}m{elapsed % 60:02d}s — dead boot? replug the puck"
+            detail = f"{elapsed // 60}m{elapsed % 60:02d}s - dead boot? replug the puck"
         elif have_fix and gps.last_row:
             mode = f" {gps.fix_mode}" if gps.fix_mode and fresh_gsa else ""
             state, attr = f"fix{mode}", green
@@ -375,28 +414,26 @@ class Dashboard:
             elapsed = int(now - gps.no_fix_since)
             detail = f"{elapsed // 60}m{elapsed % 60:02d}s"
 
-        put(2, 0, state, attr)
-        put(2, len(state) + 2, detail)
-        put(2, max(0, width - 16), f"logged {gps.n_fixes}")
-
+        pane_w = min(45, width - 1)
         row = gps.last_row
+        frame(1, 0, 5, pane_w, f" {state}  {detail} ", attr)
         if row is None:
-            put(3, 0, "position -", dim)
+            put(2, 2, "position -", dim)
         elif have_fix:
-            put(3, 0, f"{row[2]}, {row[3]}   {row[7] or '-'} m")
-            put(4, 0, f"speed {row[8] or '-'} kt   course {row[9] or '-'}")
+            put(2, 2, f"{row[2]}, {row[3]}   {row[7] or '-'} m")
+            put(3, 2, f"speed {row[8] or '-'} kt   course {row[9] or '-'}")
             dop = f"hdop {row[6] or '-'}"
             if gps.pdop and fresh_gsa:
                 dop += f"   pdop {gps.pdop}"
-            put(4, max(0, width - len(dop) - 1), dop)
+            put(4, 2, dop)
         else:
-            put(3, 0, f"last fix {(row[1] or row[0])[11:19]}Z  {row[2]}, {row[3]}", dim)
+            put(2, 2, f"last fix {(row[1] or row[0])[11:19]}Z  {row[2]}, {row[3]}", dim)
+        logged = f"logged {gps.n_fixes}"
+        put(4, max(2, pane_w - len(logged) - 3), logged)
 
-        put(6, 0, "satellites", bold)
         header = f"{gps.in_view(now)} in view"
         if have_fix and row is not None and row[5].isdigit():
             header = f"{int(row[5])} used / " + header
-        put(6, 12, header)
 
         # A used PRN is marked only when exactly one constellation reports
         # it in view — GSA lists bare PRNs, so a cross-constellation
@@ -412,37 +449,87 @@ class Dashboard:
         def angle(value):
             return int(value) if value.isdigit() else "-"
 
-        y = 7
-        if table:
-            put(y, 0, f"{'':<6} {'prn':>3}  {'el':>3}  {'az':>3}  {'snr':>3}", dim)
+        y = 6
+        if not table:
+            put(y, 0, "satellites", bold)
+            put(y, 12, header)
             y += 1
-        reserve = 6 if height >= 20 else 3
-        max_rows = max(1, height - y - reserve)
-        for talker, prn, elev, azim, snr in table[:max_rows]:
-            used = prn in gps.used and seen_in.get(prn) == 1
-            attr = green if used else (dim if snr is None else 0)
-            bar = "#" * min(10, (snr or 0) // 5)
-            put(
-                y,
-                0,
-                f"{self.NAMES.get(talker, talker):<6}"
-                f" {prn:>3}"
-                f"  {angle(elev):>3}"
-                f"  {angle(azim):>3}"
-                f"  {snr if snr is not None else '-':>3}"
-                f"  {bar}",
-                attr,
-            )
-            y += 1
-        if len(table) > max_rows:
-            put(y, 0, f"+{len(table) - max_rows} more", dim)
-            y += 1
+        else:
+            reserve = 6 if height >= 20 else 3
+            max_rows = max(1, height - y - reserve - 3)
+            rows = [(f"{'':<6} {'prn':>3}  {'el':>3}  {'az':>3}  {'snr':>3}", dim)]
+            for talker, prn, elev, azim, snr in table[:max_rows]:
+                used = prn in gps.used and seen_in.get(prn) == 1
+                row_attr = green if used else (dim if snr is None else 0)
+                bar = "#" * min(10, (snr or 0) // 5)
+                rows.append(
+                    (
+                        f"{self.NAMES.get(talker, talker):<6}"
+                        f" {prn:>3}"
+                        f"  {angle(elev):>3}"
+                        f"  {angle(azim):>3}"
+                        f"  {snr if snr is not None else '-':>3}"
+                        f"  {bar}",
+                        row_attr,
+                    )
+                )
+            if len(table) > max_rows:
+                rows.append((f"+{len(table) - max_rows} more", dim))
+            box_h = len(rows) + 2
+            frame(y, 0, box_h, pane_w, f" satellites  {header} ")
+            for i, (text, row_attr) in enumerate(rows):
+                put(y + 1 + i, 2, text[: max(0, pane_w - 3)], row_attr)
+            y += box_h
 
-        room = height - (y + 2)
+        # Sky plot: azimuth around the dial (N up), elevation from the rim
+        # (horizon) to the center (zenith); x doubled so it reads round.
+        sky_x = pane_w + 2
+        radius = min(9, (width - sky_x - 6) // 4, (height - 5) // 2)
+        plot = [
+            (prn, int(elev), int(azim), snr)
+            for talker, prn, elev, azim, snr in table
+            if elev.isdigit() and azim.isdigit()
+        ]
+        sky_on = radius >= 4 and bool(plot)
+        if sky_on:
+            frame(1, sky_x, 2 * radius + 3, 4 * radius + 5, " sky ")
+            cy = 2 + radius
+            cx = sky_x + 2 + 2 * radius
+            for deg in range(0, 360, 5):
+                rad = math.radians(deg)
+                put(
+                    cy - round(math.cos(rad) * radius),
+                    cx + round(math.sin(rad) * 2 * radius),
+                    ".",
+                    dim,
+                )
+            put(cy - radius, cx, "N", dim)
+            put(cy, cx + 2 * radius, "E", dim)
+            put(cy + radius, cx, "S", dim)
+            put(cy, cx - 2 * radius, "W", dim)
+            put(cy, cx, "+", dim)
+            for prn, elev, azim, snr in sorted(plot, key=lambda sat: sat[3] or 0):
+                frac = max(0.0, (90 - elev) / 90)
+                rad = math.radians(azim)
+                used = prn in gps.used and seen_in.get(prn) == 1
+                put(
+                    cy - round(math.cos(rad) * radius * frac),
+                    cx + round(math.sin(rad) * 2 * radius * frac),
+                    f"{prn:02d}",
+                    green if used else (dim if snr is None else 0),
+                )
+
+        ev_w = sky_x - 1 if sky_on else width - 1
+        room = height - (y + 2) - 1
         if room >= 1 and self.events:
             put(y + 1, 0, "events", bold)
             for i, (stamp, text) in enumerate(list(self.events)[-room:]):
-                put(y + 2 + i, 0, f"{stamp}  {text}", dim)
+                line = f"{stamp}  {text}"
+                if len(line) > ev_w:
+                    line = "..." + line[-(ev_w - 3):]
+                put(y + 2 + i, 0, line, dim)
+        hint = "q quit  p pause"
+        put(height - 1, max(0, width - len(hint) - 2), hint, dim)
 
         self.screen.refresh()
 
@@ -510,7 +597,8 @@ def main():
                 if dash:
                     if not device_missing:
                         dash.event(f"no device matches {args.port!r}")
-                    dash.draw(gps, None, time.monotonic())
+                    if dash.draw(gps, None, time.monotonic()) == "quit":
+                        raise KeyboardInterrupt
                 else:
                     status.println(
                         f"no device matches {args.port!r} — retrying in 5 s",
@@ -531,7 +619,8 @@ def main():
                         no_data = now - gps.last_sentence
                         if dash:
                             if now - last_draw >= DRAW_EVERY_SECONDS:
-                                dash.draw(gps, port, now)
+                                if dash.draw(gps, port, now) == "quit":
+                                    raise KeyboardInterrupt
                                 last_draw = now
                         elif status.enabled:
                             if now - last_draw >= DRAW_EVERY_SECONDS:
@@ -582,7 +671,8 @@ def main():
             except (serial.SerialException, OSError) as err:
                 emit(f"serial error: {err} — reconnecting in 5 s", err=True)
                 if dash:
-                    dash.draw(gps, port, time.monotonic())
+                    if dash.draw(gps, port, time.monotonic()) == "quit":
+                        raise KeyboardInterrupt
                 time.sleep(5)
     except KeyboardInterrupt:
         pass
