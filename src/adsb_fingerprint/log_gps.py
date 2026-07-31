@@ -536,7 +536,8 @@ class Dashboard:
         # Sky plot: azimuth around the dial (N up), elevation from the rim
         # (horizon) to the center (zenith); x doubled so it reads round.
         sky_x = pane_w + 2
-        radius = min(12, (width - sky_x - 6) // 4, (height - 5) // 2)
+        # (height - 10) keeps a few full-width events rows below the dial.
+        radius = min(12, (width - sky_x - 6) // 4, (height - 10) // 2)
         plot = [
             (prn, int(elev), int(azim), snr)
             for talker, prn, elev, azim, snr in table
@@ -588,11 +589,13 @@ class Dashboard:
                     green if used else (dim if snr is None else 0),
                 )
 
+        if sky_on:
+            y = max(y, 2 * radius + 4)
         room = height - y - 3
         if room >= 1 and self.events:
             shown = list(self.events)[-room:]
-            frame(y, 0, len(shown) + 2, pane_w, " events ")
-            ev_w = pane_w - 3
+            frame(y, 0, len(shown) + 2, width - 1, " events ")
+            ev_w = width - 4
             for i, (stamp, text) in enumerate(shown):
                 line = f"{stamp}  {text}"
                 if len(line) > ev_w:
