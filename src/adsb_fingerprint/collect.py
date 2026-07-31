@@ -39,7 +39,7 @@ import numpy as np
 import yaml
 from pyModeS import PipeDecoder
 
-from adsb_fingerprint import config, db, modes
+from adsb_fingerprint import config, db, location, modes
 from adsb_fingerprint.capture import TUNERS, _apply_gain
 
 BLOCK = 131072           # samples per read (~55 ms at 2.4 MSPS); multiple of 512
@@ -80,14 +80,13 @@ COPY_SQL = """
     from stdin
 """
 
-# Rows copied before the station resolves carry null receiver columns; one
-# update at resolution time brings them onto the session's stamp.
-STATION_BACKFILL_SQL = """
+# Resolution can revise the provisional stamp (or fill rows copied while
+# there was none), so restamping rewrites the whole session.
+STATION_RESTAMP_SQL = """
     update messages
     set receiver_latitude = %(latitude)s,
         receiver_longitude = %(longitude)s
     where session = %(session)s
-    and receiver_latitude is null
 """
 
 # Every decoded message — capped or not — refreshes live_state, so the
@@ -197,33 +196,49 @@ class StationEstimator:
         )
 
 
-def resolve_station(estimator):
+def resolve_station(estimator, provisional=None):
     """Pick the session's receiver stamp: (latitude, longitude, source).
 
-    The surveyed config position wins while it agrees with the traffic
-    estimate; a config left over from a previous location shows up as
-    disagreement and is ignored with a warning.
+    Precision order — surveyed config, then a provisional Location
+    Services fix, then the traffic estimate itself — but the first two
+    are absolute claims, so each is trusted only while it agrees with
+    the traffic. A config left over from a previous location (or a
+    pathological Wi-Fi fix) shows up as disagreement and is ignored
+    with a warning.
     """
     est_lat, est_lon = estimator.estimate()
     print(
         f"\nstation estimate: {est_lat:.3f}, {est_lon:.3f} "
         f"(median of {estimator.n} aircraft)"
     )
-    if config.RECEIVER_LAT is None:
-        return est_lat, est_lon, "estimated"
-    offset_km = _haversine_km(
-        config.RECEIVER_LAT,
-        config.RECEIVER_LON,
-        est_lat,
-        est_lon,
-    )
-    if offset_km <= STATION_AGREE_KM:
-        print(f"  config receiver agrees ({offset_km:.0f} km) — using its surveyed position")
-        return config.RECEIVER_LAT, config.RECEIVER_LON, "config"
-    print(
-        f"  config receiver is {offset_km:.0f} km away — stale (moved since it was "
-        f"set?) — ignoring it"
-    )
+    if config.RECEIVER_LAT is not None:
+        offset_km = _haversine_km(
+            config.RECEIVER_LAT,
+            config.RECEIVER_LON,
+            est_lat,
+            est_lon,
+        )
+        if offset_km <= STATION_AGREE_KM:
+            print(f"  config receiver agrees ({offset_km:.0f} km) — using its surveyed position")
+            return config.RECEIVER_LAT, config.RECEIVER_LON, "config"
+        print(
+            f"  config receiver is {offset_km:.0f} km away — stale (moved since it was "
+            f"set?) — ignoring it"
+        )
+    if provisional is not None:
+        offset_km = _haversine_km(
+            provisional[0],
+            provisional[1],
+            est_lat,
+            est_lon,
+        )
+        if offset_km <= STATION_AGREE_KM:
+            print(f"  location services agrees ({offset_km:.0f} km) — using its position")
+            return provisional[0], provisional[1], "location-services"
+        print(
+            f"  location services fix is {offset_km:.0f} km away — distrusting it, "
+            f"using the estimate"
+        )
     return est_lat, est_lon, "estimated"
 
 
@@ -286,10 +301,21 @@ def collect(
 
     # Stateful decoder: positions resolve from each aircraft's own CPR frame
     # pairs, so collection needs no receiver location — it works anywhere.
-    # The station's own position falls out of the traffic instead.
+    # The station's own position comes from Location Services right away
+    # (provisional), then the traffic corroborates or replaces it.
     pipe = PipeDecoder()
     estimator = StationEstimator()
-    station = None
+    station_final = False
+    fix = location.current_location()
+    if fix is not None:
+        station = (fix[0], fix[1], "location-services")
+        print(
+            f"location services: {fix[0]:.4f}, {fix[1]:.4f} (±{fix[2]:.0f} m) — "
+            f"provisional until traffic corroborates"
+        )
+    else:
+        station = None
+        print("location services: no fix — station will be estimated from traffic")
     started = datetime.now(timezone.utc)
     session = session or started.strftime("%Y%m%dT%H%M%SZ")
     session_dir = config.CAPTURE_DIR / session
@@ -494,10 +520,11 @@ def collect(
                 if now - last_flush >= FLUSH_S:
                     flush(store, conn)
                     last_flush = now
-                    if station is None and estimator.n >= STATION_FREEZE_AIRCRAFT:
-                        station = resolve_station(estimator)
+                    if not station_final and estimator.n >= STATION_FREEZE_AIRCRAFT:
+                        station = resolve_station(estimator, station)
+                        station_final = True
                         conn.execute(
-                            STATION_BACKFILL_SQL,
+                            STATION_RESTAMP_SQL,
                             {
                                 "latitude": station[0],
                                 "longitude": station[1],
@@ -522,19 +549,21 @@ def collect(
             flush(store, conn)
             device.close()
 
-        # A session too short to hit the freeze count still gets a stamp
-        # from whatever pool accumulated — unless even that is too thin,
-        # in which case rows honestly stay "position unknown".
-        if station is None and estimator.n >= STATION_MIN_AIRCRAFT:
-            station = resolve_station(estimator)
+        # A session too short to hit the freeze count still resolves from
+        # whatever pool accumulated. Below even that, a provisional
+        # Location Services fix stands uncorroborated (rows already carry
+        # it), and with nothing at all rows honestly stay unknown.
+        if not station_final and estimator.n >= STATION_MIN_AIRCRAFT:
+            station = resolve_station(estimator, station)
+            station_final = True
         if station is None:
             print(
                 f"\nstation: unresolved ({estimator.n} aircraft with positions, "
                 f"need {STATION_MIN_AIRCRAFT}) — receiver stamps left null"
             )
-        else:
+        elif station_final:
             conn.execute(
-                STATION_BACKFILL_SQL,
+                STATION_RESTAMP_SQL,
                 {
                     "latitude": station[0],
                     "longitude": station[1],

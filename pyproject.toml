@@ -9,6 +9,7 @@ dependencies = [
     "pandas",
     "psycopg[binary]",
     "pyModeS",
+    "pyobjc-framework-corelocation>=12.2.1 ; sys_platform == 'darwin'",
     "pyrtlsdr[lib]",
     "pyserial>=3.5",
     "python-dotenv",
