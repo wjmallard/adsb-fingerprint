@@ -9,6 +9,7 @@ glob — re-resolved on every reconnect.
 
 import argparse
 import csv
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -71,16 +72,30 @@ def resolve_port(pattern):
 
 
 class StatusLine:
-    """One self-rewriting terminal line; inert when stdout is not a TTY."""
+    """One self-rewriting terminal line; inert when stdout is not a TTY.
+
+    Clipped to the terminal width on every redraw (width is re-measured
+    each time, so resizes self-heal) — a line that spills past the edge
+    would wrap and scroll instead of rewriting in place.
+    """
 
     def __init__(self):
         self.enabled = sys.stdout.isatty()
         self.active = False
 
-    def update(self, text):
-        if self.enabled:
-            print(f"\r{text}\033[K", end="", flush=True)
-            self.active = True
+    def update(self, state, color, rest):
+        if not self.enabled:
+            return
+        try:
+            width = os.get_terminal_size(sys.stdout.fileno()).columns
+        except OSError:
+            width = 80
+        if width <= 0:
+            width = 80
+        plain = (state + rest)[: max(10, width - 1)]
+        text = color + plain[: len(state)] + RESET + plain[len(state):]
+        print(f"\r{text}\033[K", end="", flush=True)
+        self.active = True
 
     def println(self, text, file=sys.stdout):
         """Print a regular line without leaving status-line debris."""
@@ -91,29 +106,35 @@ class StatusLine:
 
 
 def format_status(have_fix, last_row, n_fixes, sats_in_view, no_fix_seconds, no_data_seconds):
+    """Return (state word, its color, rest of the line) as plain text."""
     if no_data_seconds >= NO_DATA_AFTER_SECONDS:
         elapsed = int(no_data_seconds)
         return (
-            f"{RED}no data from device{RESET}"
-            f"  {elapsed // 60}m{elapsed % 60:02d}s"
+            "no data from device",
+            RED,
+            f"  {elapsed // 60}m{elapsed % 60:02d}s",
         )
     in_view = sum(sats_in_view.values())
     if have_fix and last_row:
         clock = (last_row[1] or last_row[0])[11:19]
+        sats_used = str(int(last_row[5])) if last_row[5].isdigit() else "?"
         return (
-            f"{GREEN}fix{RESET} {clock}Z"
+            "fix",
+            GREEN,
+            f" {clock}Z"
             f"  {last_row[2]}, {last_row[3]}"
-            f"  alt {last_row[7] or '?'}m"
-            f"  sats {last_row[5] or '?'}/{in_view}"
+            f"  {last_row[7] or '?'}m"
+            f"  {sats_used}/{in_view} sats"
             f"  hdop {last_row[6] or '?'}"
-            f"  logged {n_fixes}"
+            f"  logged {n_fixes}",
         )
     state, color = ("no fix yet", YELLOW) if n_fixes == 0 else ("fix lost", RED)
     elapsed = int(no_fix_seconds)
     return (
-        f"{color}{state}{RESET}"
+        state,
+        color,
         f"  {in_view} satellites in view"
-        f"  {elapsed // 60}m{elapsed % 60:02d}s"
+        f"  {elapsed // 60}m{elapsed % 60:02d}s",
     )
 
 
@@ -205,7 +226,7 @@ def main():
                         if status.enabled:
                             if now - last_draw >= DRAW_EVERY_SECONDS:
                                 status.update(
-                                    format_status(
+                                    *format_status(
                                         have_fix,
                                         last_row,
                                         n_fixes,
