@@ -15,6 +15,7 @@ periodic heartbeat prints.
 import argparse
 import csv
 import curses
+import locale
 import math
 import os
 import sys
@@ -85,6 +86,15 @@ GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
 RESET = "\033[0m"
+
+# One braille cell is a 2x4 dot grid (square dot pitch); bit for dot at
+# (row in cell, column in cell).
+BRAILLE_BITS = (
+    (0x01, 0x08),
+    (0x02, 0x10),
+    (0x04, 0x20),
+    (0x40, 0x80),
+)
 
 
 def nmea_deg(value, hemisphere):
@@ -354,6 +364,7 @@ class Dashboard:
         self.events = deque(maxlen=20)
         self.paused = False
         self.started = time.monotonic()
+        self.utf8 = "utf" in (getattr(self.screen, "encoding", "") or "").lower()
 
     def event(self, text):
         self.events.append((datetime.now().strftime("%H:%M:%S"), str(text)))
@@ -520,7 +531,7 @@ class Dashboard:
         # Sky plot: azimuth around the dial (N up), elevation from the rim
         # (horizon) to the center (zenith); x doubled so it reads round.
         sky_x = pane_w + 2
-        radius = min(9, (width - sky_x - 6) // 4, (height - 5) // 2)
+        radius = min(12, (width - sky_x - 6) // 4, (height - 5) // 2)
         plot = [
             (prn, int(elev), int(azim), snr)
             for talker, prn, elev, azim, snr in table
@@ -531,14 +542,31 @@ class Dashboard:
             frame(1, sky_x, 2 * radius + 3, 4 * radius + 5, " sky ")
             cy = 2 + radius
             cx = sky_x + 2 + 2 * radius
-            for deg in range(0, 360, 5):
-                rad = math.radians(deg)
-                put(
-                    cy - round(math.cos(rad) * radius),
-                    cx + round(math.sin(rad) * 2 * radius),
-                    ".",
-                    dim,
-                )
+            if self.utf8:
+                # Sub-cell braille dots: solid rim, dashed 30/60-degree
+                # elevation rings.
+                dots = {}
+                center_y = 4 * radius + 2
+                center_x = 4 * radius + 1
+                for reach, step in ((1.0, 1), (2 / 3, 4), (1 / 3, 6)):
+                    span = 4 * radius * reach
+                    for deg in range(0, 360, step):
+                        rad = math.radians(deg)
+                        dot_y = round(center_y - math.cos(rad) * span)
+                        dot_x = round(center_x + math.sin(rad) * span)
+                        cell = (dot_y // 4, dot_x // 2)
+                        dots[cell] = dots.get(cell, 0) | BRAILLE_BITS[dot_y % 4][dot_x % 2]
+                for (cell_y, cell_x), mask in dots.items():
+                    put(2 + cell_y, sky_x + 2 + cell_x, chr(0x2800 + mask), dim)
+            else:
+                for deg in range(0, 360, 5):
+                    rad = math.radians(deg)
+                    put(
+                        cy - round(math.cos(rad) * radius),
+                        cx + round(math.sin(rad) * 2 * radius),
+                        ".",
+                        dim,
+                    )
             put(cy - radius, cx, "N", dim)
             put(cy, cx + 2 * radius, "E", dim)
             put(cy + radius, cx, "S", dim)
@@ -598,6 +626,21 @@ def main():
     args = parser.parse_args()
 
     config.GPS_TRACK_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
+    if "utf" not in (locale.nl_langinfo(locale.CODESET) or "").lower():
+        # A shell-wide LC_ALL=C shouldn't cost the dashboard its braille
+        # sky: LC_CTYPE governs only this process's terminal encoding.
+        for name in (os.environ.get("LANG", ""), "en_US.UTF-8", "C.UTF-8"):
+            if "utf" not in name.lower():
+                continue
+            try:
+                locale.setlocale(locale.LC_CTYPE, name)
+                break
+            except locale.Error:
+                continue
     dash = None
     if sys.stdout.isatty() and not args.plain:
         # setupterm raises (initscr would exit the process) on a broken
