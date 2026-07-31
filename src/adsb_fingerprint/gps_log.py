@@ -45,6 +45,42 @@ NO_FIX_EVERY_SECONDS = 30
 DRAW_EVERY_SECONDS = 0.5
 NO_DATA_AFTER_SECONDS = 10
 
+FRESH_FIX_SECONDS = 120  # a track row this recent proves the logger is live
+
+
+def latest_fix(max_age_s=FRESH_FIX_SECONDS):
+    """Freshest logged puck fix as (latitude, longitude, age_s), or None.
+
+    Reads the tail of the newest daily track file. The logger is the sole
+    owner of the serial port, so this file is how other tools (the
+    collector's station stamp) lean on the puck: a fresh row is both a
+    position and proof the logger is running; a stale or absent one means
+    no live GPS, with no port contention either way.
+    """
+    paths = sorted(config.GPS_TRACK_DIR.glob("*.csv"))
+    if not paths:
+        return None
+    path = paths[-1]                       # UTC-day names sort chronologically
+    with path.open("rb") as handle:
+        header = handle.readline().decode()
+        handle.seek(0, os.SEEK_END)
+        handle.seek(max(handle.tell() - 8192, 0))
+        tail = handle.read().decode(errors="replace")
+    columns = next(csv.reader([header]))
+    for line in reversed(tail.splitlines()):
+        row = dict(zip(columns, next(csv.reader([line]), [])))
+        try:
+            epoch = datetime.fromisoformat(row["host_utc"]).timestamp()
+            latitude = float(row["latitude"])
+            longitude = float(row["longitude"])
+        except (KeyError, ValueError):
+            continue
+        age = time.time() - epoch
+        if age > max_age_s:
+            return None                    # rows only get older further up
+        return latitude, longitude, age
+    return None
+
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
