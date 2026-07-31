@@ -34,6 +34,7 @@ FIELDS = [
 STATUS_EVERY_SECONDS = 300
 NO_FIX_EVERY_SECONDS = 30
 DRAW_EVERY_SECONDS = 0.5
+NO_DATA_AFTER_SECONDS = 10
 
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
@@ -89,7 +90,13 @@ class StatusLine:
         print(text, file=file)
 
 
-def format_status(have_fix, last_row, n_fixes, sats_in_view, no_fix_seconds):
+def format_status(have_fix, last_row, n_fixes, sats_in_view, no_fix_seconds, no_data_seconds):
+    if no_data_seconds >= NO_DATA_AFTER_SECONDS:
+        elapsed = int(no_data_seconds)
+        return (
+            f"{RED}no data from device{RESET}"
+            f"  {elapsed // 60}m{elapsed % 60:02d}s"
+        )
     in_view = sum(sats_in_view.values())
     if have_fix and last_row:
         clock = (last_row[1] or last_row[0])[11:19]
@@ -190,9 +197,11 @@ def main():
             try:
                 with serial.Serial(port, 9600, timeout=2) as ser:
                     status.println(f"logging {port}")
+                    last_sentence = time.monotonic()
                     while not expired():
                         now = time.monotonic()
                         have_fix = no_fix_since is None
+                        no_data = now - last_sentence
                         if status.enabled:
                             if now - last_draw >= DRAW_EVERY_SECONDS:
                                 status.update(
@@ -202,13 +211,22 @@ def main():
                                         n_fixes,
                                         sats_in_view,
                                         0 if have_fix else now - no_fix_since,
+                                        no_data,
                                     )
                                 )
                                 last_draw = now
                         elif now - last_status >= (
-                            STATUS_EVERY_SECONDS if have_fix else NO_FIX_EVERY_SECONDS
+                            STATUS_EVERY_SECONDS
+                            if have_fix and no_data < NO_DATA_AFTER_SECONDS
+                            else NO_FIX_EVERY_SECONDS
                         ):
-                            if have_fix:
+                            if no_data >= NO_DATA_AFTER_SECONDS:
+                                elapsed = int(no_data)
+                                print(
+                                    f"no data from device — "
+                                    f"{elapsed // 60}m{elapsed % 60:02d}s elapsed"
+                                )
+                            elif have_fix:
                                 print(f"{n_fixes} fixes logged, latest {last_row[2]}, {last_row[3]}")
                             else:
                                 state = "no fix yet" if n_fixes == 0 else "fix lost"
@@ -222,6 +240,7 @@ def main():
                         line = ser.readline().decode(errors="replace").strip()
                         if not checksum_ok(line):
                             continue
+                        last_sentence = time.monotonic()
                         fields = line[1:].partition("*")[0].split(",")
                         sentence = fields[0][2:]
                         if sentence == "RMC" and len(fields) > 9:
