@@ -23,9 +23,14 @@ collect:
   max_per_aircraft: 3          # keep at most this many messages per aircraft ...
   window_seconds: 10           # ... per this many seconds (0 disables the cap)
 
-receiver:
-  latitude: 37.62              # your approximate location, for ADS-B position decode
-  longitude: -122.38           # (placeholder: SFO)
+# Optional surveyed antenna position. adsb-collect locates the station from
+# the traffic itself (median of decoded aircraft positions), so nothing here
+# is required — set this only if you have surveyed coordinates, and they are
+# used only while they agree with the traffic estimate (a stale entry left
+# over from a previous location is detected and ignored).
+# receiver:
+#   latitude: 37.62            # (placeholder: SFO)
+#   longitude: -122.38
 
 gps:
   # USB GPS puck (u-blox VK-162). The device path changes with the physical

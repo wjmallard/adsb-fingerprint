@@ -21,11 +21,54 @@ from adsb_fingerprint import (
 
 app = Flask(__name__)
 
+# The station's own position: the newest per-message receiver stamp the
+# collector wrote (traffic-estimated, config-verified, or GPS-geotagged),
+# so the map follows the antenna wherever collection last ran.
+STATION_SQL = """
+    select
+        receiver_latitude,
+        receiver_longitude
+    from messages
+    where receiver_latitude is not null
+    order by captured_at desc
+    limit 1
+"""
+
+_station_cache = {
+    "at": float("-inf"),
+    "position": None,
+}
+
+
+def station_position():
+    """(lat, lon) of the receiver, or None when nothing has ever said.
+
+    Falls back to the config receiver for databases that predate stamping.
+    Cached briefly: this backs every poll but changes at most once a session.
+    """
+    if time.monotonic() - _station_cache["at"] > 60.0:
+        with db.connect() as conn:
+            row = conn.execute(STATION_SQL).fetchone()
+        if row is not None:
+            _station_cache["position"] = (
+                row["receiver_latitude"],
+                row["receiver_longitude"],
+            )
+        elif config.RECEIVER_LAT is not None:
+            _station_cache["position"] = (
+                config.RECEIVER_LAT,
+                config.RECEIVER_LON,
+            )
+        else:
+            _station_cache["position"] = None
+        _station_cache["at"] = time.monotonic()
+    return _station_cache["position"]
+
+
 # One row per aircraft heard in the window. Position, velocity, and ident ride
 # in different message types, so the newest row rarely has everything — each
 # field is independently "latest non-null". Distance/bearing from the receiver
-# are PostGIS geodesics over the latest fix; the receiver point is
-# parameterized from config until a GPS observing-location table exists.
+# are PostGIS geodesics over the latest fix, from station_position().
 # The registry joins feed glyph_for() — which map symbol each airframe gets.
 AIRCRAFT_SQL = """
     with latest as (
@@ -349,10 +392,11 @@ RINGS_SQL = """
 
 @app.route("/")
 def index():
+    station = station_position()
     return render_template(
         "index.html",
-        center=[config.RECEIVER_LON, config.RECEIVER_LAT],
-        zoom=config.MAP_DEFAULT_ZOOM,
+        center=[station[1], station[0]] if station else [0.0, 0.0],
+        zoom=config.MAP_DEFAULT_ZOOM if station else 2,
         roster_minutes=config.MAP_ROSTER_MINUTES,
     )
 
@@ -739,13 +783,14 @@ def api_aircraft():
         default=config.MAP_ROSTER_MINUTES,
         type=float,
     )
+    station = station_position()
     with db.connect() as conn:
         rows = conn.execute(
             AIRCRAFT_SQL,
             {
                 "minutes": minutes,
-                "receiver_lat": config.RECEIVER_LAT,
-                "receiver_lon": config.RECEIVER_LON,
+                "receiver_lat": station[0] if station else None,
+                "receiver_lon": station[1] if station else None,
             },
         ).fetchall()
     features = []
@@ -854,12 +899,18 @@ def api_aircraft_history(icao):
 def api_overlay():
     # Receiver point + range-ring polygons, all PostGIS-generated server-side
     # — the JS only ever draws coordinates it was handed.
+    station = station_position()
+    if station is None:
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+        }
     with db.connect() as conn:
         rows = conn.execute(
             RINGS_SQL,
             {
-                "lat": config.RECEIVER_LAT,
-                "lon": config.RECEIVER_LON,
+                "lat": station[0],
+                "lon": station[1],
                 "radii_km": list(config.MAP_RINGS_KM),
             },
         ).fetchall()
@@ -868,7 +919,7 @@ def api_overlay():
             "type": "Feature",
             "geometry": {
                 "type": "Point",
-                "coordinates": [config.RECEIVER_LON, config.RECEIVER_LAT],
+                "coordinates": [station[1], station[0]],
             },
             "properties": {
                 "kind": "receiver",

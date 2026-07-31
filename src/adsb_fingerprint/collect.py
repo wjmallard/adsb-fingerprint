@@ -26,6 +26,14 @@ import threading
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from math import (
+    asin,
+    cos,
+    radians,
+    sin,
+    sqrt,
+)
+from statistics import median
 
 import numpy as np
 import yaml
@@ -41,6 +49,10 @@ QUEUE_BLOCKS = 256       # ~256 MB cap; reader only drops (counted) if this fill
 FLUSH_S = 1              # seconds between DB/snippet flushes (keeps the index near-real-time)
 PRINT_S = 30             # seconds between progress lines
 IDENT_ALLOWANCE = 1      # cap-exempt ident (TC 1-4, callsign) messages per aircraft per window
+
+STATION_MIN_AIRCRAFT = 3     # fewest contributing aircraft worth a median
+STATION_FREEZE_AIRCRAFT = 20 # stop refining the estimate at this many
+STATION_AGREE_KM = 100.0     # config receiver within this of the estimate is trusted
 
 COPY_SQL = """
     copy messages (
@@ -61,9 +73,21 @@ COPY_SQL = """
         callsign,
         ground_speed,
         track,
-        vertical_rate
+        vertical_rate,
+        receiver_latitude,
+        receiver_longitude
     )
     from stdin
+"""
+
+# Rows copied before the station resolves carry null receiver columns; one
+# update at resolution time brings them onto the session's stamp.
+STATION_BACKFILL_SQL = """
+    update messages
+    set receiver_latitude = %(latitude)s,
+        receiver_longitude = %(longitude)s
+    where session = %(session)s
+    and receiver_latitude is null
 """
 
 # Every decoded message — capped or not — refreshes live_state, so the
@@ -133,6 +157,76 @@ STATE_FIELDS = (
 )
 
 
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance between two WGS84 points, in km."""
+    lat1, lon1, lat2, lon2 = map(radians, (lat1, lon1, lat2, lon2))
+    a = (
+        sin((lat2 - lat1) / 2) ** 2
+        + cos(lat1) * cos(lat2) * sin((lon2 - lon1) / 2) ** 2
+    )
+    return 2.0 * 6371.0088 * asin(sqrt(a))
+
+
+class StationEstimator:
+    """Receiver position inferred from the traffic itself.
+
+    Each aircraft's first resolved fix enters the pool (everything heard is
+    within radio range of the antenna); the per-axis median is the station
+    estimate — good to tens of km, plenty inside CPR's 180 NM local-decode
+    validity and enough to catch a surveyed config gone stale after a move.
+    One estimate per session: a session is assumed stationary (mobile
+    collection gets true per-message positions from adsb-geotag instead).
+    """
+
+    def __init__(self):
+        self.first_fixes = {}
+
+    def add(self, icao, latitude, longitude):
+        if icao not in self.first_fixes and len(self.first_fixes) < STATION_FREEZE_AIRCRAFT:
+            self.first_fixes[icao] = (latitude, longitude)
+
+    @property
+    def n(self):
+        return len(self.first_fixes)
+
+    def estimate(self):
+        fixes = self.first_fixes.values()
+        return (
+            median(lat for lat, _ in fixes),
+            median(lon for _, lon in fixes),
+        )
+
+
+def resolve_station(estimator):
+    """Pick the session's receiver stamp: (latitude, longitude, source).
+
+    The surveyed config position wins while it agrees with the traffic
+    estimate; a config left over from a previous location shows up as
+    disagreement and is ignored with a warning.
+    """
+    est_lat, est_lon = estimator.estimate()
+    print(
+        f"\nstation estimate: {est_lat:.3f}, {est_lon:.3f} "
+        f"(median of {estimator.n} aircraft)"
+    )
+    if config.RECEIVER_LAT is None:
+        return est_lat, est_lon, "estimated"
+    offset_km = _haversine_km(
+        config.RECEIVER_LAT,
+        config.RECEIVER_LON,
+        est_lat,
+        est_lon,
+    )
+    if offset_km <= STATION_AGREE_KM:
+        print(f"  config receiver agrees ({offset_km:.0f} km) — using its surveyed position")
+        return config.RECEIVER_LAT, config.RECEIVER_LON, "config"
+    print(
+        f"  config receiver is {offset_km:.0f} km away — stale (moved since it was "
+        f"set?) — ignoring it"
+    )
+    return est_lat, est_lon, "estimated"
+
+
 def track_state(state, dirty, icao, stamp, msg):
     """Fold one decoded message into the per-airframe latest-state buffer."""
     entry = state.setdefault(icao, {"msg_heard": 0})
@@ -192,7 +286,10 @@ def collect(
 
     # Stateful decoder: positions resolve from each aircraft's own CPR frame
     # pairs, so collection needs no receiver location — it works anywhere.
+    # The station's own position falls out of the traffic instead.
     pipe = PipeDecoder()
+    estimator = StationEstimator()
+    station = None
     started = datetime.now(timezone.utc)
     session = session or started.strftime("%Y%m%dT%H%M%SZ")
     session_dir = config.CAPTURE_DIR / session
@@ -217,10 +314,17 @@ def collect(
                 "tuner": tuner,
                 "device_index": int(device_index),
             },
-            "receiver": {
-                "latitude": config.RECEIVER_LAT,
-                "longitude": config.RECEIVER_LON,
-            },
+            "receiver": (
+                {
+                    "latitude": station[0],
+                    "longitude": station[1],
+                    "source": station[2],
+                }
+                if station
+                else {
+                    "source": "unresolved",
+                }
+            ),
             "policy": {
                 "max_per_aircraft": max_per_aircraft,
                 "window_seconds": window_seconds,
@@ -334,6 +438,8 @@ def collect(
                             abs_off / sample_rate_hz,
                         ),
                     )
+                    if msg.get("latitude") is not None:
+                        estimator.add(icao, msg["latitude"], msg["longitude"])
                     track_state(state, dirty, icao, stamp, msg)
                     if icao not in seen:
                         seen.add(icao)
@@ -377,6 +483,8 @@ def collect(
                             msg.get("ground_speed"),
                             msg.get("track"),
                             msg.get("vertical_rate"),
+                            station[0] if station else None,
+                            station[1] if station else None,
                         )
                     )
                     n_stored += 1
@@ -386,6 +494,17 @@ def collect(
                 if now - last_flush >= FLUSH_S:
                     flush(store, conn)
                     last_flush = now
+                    if station is None and estimator.n >= STATION_FREEZE_AIRCRAFT:
+                        station = resolve_station(estimator)
+                        conn.execute(
+                            STATION_BACKFILL_SQL,
+                            {
+                                "latitude": station[0],
+                                "longitude": station[1],
+                                "session": session,
+                            },
+                        )
+                        conn.commit()
                 if now - last_print >= PRINT_S:
                     elapsed = now - start
                     print(
@@ -402,6 +521,27 @@ def collect(
             reader.join(timeout=2.0)
             flush(store, conn)
             device.close()
+
+        # A session too short to hit the freeze count still gets a stamp
+        # from whatever pool accumulated — unless even that is too thin,
+        # in which case rows honestly stay "position unknown".
+        if station is None and estimator.n >= STATION_MIN_AIRCRAFT:
+            station = resolve_station(estimator)
+        if station is None:
+            print(
+                f"\nstation: unresolved ({estimator.n} aircraft with positions, "
+                f"need {STATION_MIN_AIRCRAFT}) — receiver stamps left null"
+            )
+        else:
+            conn.execute(
+                STATION_BACKFILL_SQL,
+                {
+                    "latitude": station[0],
+                    "longitude": station[1],
+                    "session": session,
+                },
+            )
+            conn.commit()
 
     elapsed = time.perf_counter() - start
     expected_blocks = elapsed * sample_rate_hz / BLOCK

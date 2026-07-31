@@ -30,9 +30,12 @@ FREQ_CORRECTION_PPM = int(_config["radio"]["freq_correction_ppm"])
 COLLECT_MAX_PER_AIRCRAFT = int(_config["collect"]["max_per_aircraft"])
 COLLECT_WINDOW_SECONDS = int(_config["collect"]["window_seconds"])
 
-_receiver = _config.get("receiver", {})
-RECEIVER_LAT = float(_receiver.get("latitude", 37.62))
-RECEIVER_LON = float(_receiver.get("longitude", -122.38))
+# Optional surveyed receiver position. Decoding never needs it; adsb-collect
+# locates the station from the traffic and only trusts these coordinates for
+# the session's receiver stamp while they agree with that estimate.
+_receiver = _config.get("receiver") or {}
+RECEIVER_LAT = float(_receiver["latitude"]) if "latitude" in _receiver else None
+RECEIVER_LON = float(_receiver["longitude"]) if "longitude" in _receiver else None
 
 _gps = _config.get("gps", {})
 GPS_PORT = _gps.get("port", "/dev/cu.usbmodem*")
