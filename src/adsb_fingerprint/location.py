@@ -6,14 +6,15 @@ first guess for the station's whereabouts, cross-checked against the
 traffic estimate before anything final trusts it (see adsb-collect).
 
 The asking is delegated to a tiny Swift helper compiled on first use
-(location_helper.swift, Info.plist embedded, ad-hoc signed): macOS
-ignores authorization requests from binaries without an embedded usage
-description, which an interpreter can never carry — a bare python
-request raises no dialog and registers nothing. The helper appears as
-"adsb-location" in System Settings -> Privacy & Security -> Location
-Services; `adsb-location` (main below) walks the one-time authorization
-dance interactively, while the collector's startup query stays quiet
-and bounded.
+into a minimal ad-hoc-signed .app bundle (location_helper.swift +
+location_helper.plist): macOS ignores authorization requests from
+processes without a usage description, which an interpreter can never
+carry — a bare python request raises no dialog and registers nothing —
+and locationd keys authorization off bundle identity. The helper
+appears as "adsb-location" in System Settings -> Privacy & Security ->
+Location Services; `adsb-location` (main below) walks the one-time
+authorization dance interactively, while the collector's startup query
+stays quiet and bounded.
 
 The pyobjc path (darwin-marked dependency, lazily imported) remains as
 a fallback for environments without the Swift toolchain where python
@@ -32,19 +33,25 @@ PROMPT_TIMEOUT_S = 30.0  # give a human this long to answer the one-time prompt
 
 
 def _helper_path():
-    """Path to the compiled helper, building it on first use (or None).
+    """Executable inside the compiled helper .app, built on first use.
 
-    Built into the environment's bin directory beside the console
-    scripts; rebuilt whenever the source or embedded plist is newer.
-    None when the Swift toolchain is unavailable.
+    locationd keys authorization off bundle identity, and treats bare
+    binaries unreliably on recent macOS — so the helper lives in a
+    minimal .app bundle under the environment's share directory
+    (running its inner executable directly still carries the bundle's
+    identity). Rebuilt whenever the source or plist is newer; None when
+    the Swift toolchain is unavailable.
     """
-    helper = Path(sys.prefix) / "bin" / "adsb-location-helper"
+    bundle = Path(sys.prefix) / "share" / "adsb-location.app"
+    helper = bundle / "Contents" / "MacOS" / "adsb-location-helper"
     source = Path(__file__).with_name("location_helper.swift")
     plist = Path(__file__).with_name("location_helper.plist")
     fresh = max(source.stat().st_mtime, plist.stat().st_mtime)
     if helper.exists() and helper.stat().st_mtime >= fresh:
         return helper
     try:
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        (bundle / "Contents" / "Info.plist").write_bytes(plist.read_bytes())
         subprocess.run(
             [
                 "xcrun",
@@ -53,17 +60,13 @@ def _helper_path():
                 "-O",
                 str(source),
                 "-o", str(helper),
-                "-Xlinker", "-sectcreate",
-                "-Xlinker", "__TEXT",
-                "-Xlinker", "__info_plist",
-                "-Xlinker", str(plist),
             ],
             check=True,
             capture_output=True,
             timeout=120,
         )
         subprocess.run(
-            ["codesign", "--force", "--sign", "-", str(helper)],
+            ["codesign", "--force", "--sign", "-", str(bundle)],
             check=True,
             capture_output=True,
             timeout=30,
@@ -173,11 +176,6 @@ def main():
             "needed (xcode-select --install). Without it, python itself "
             "cannot be granted location access."
         )
-    print(
-        'asking macOS for a fix — approve the dialog if one appears; if none\n'
-        'does, enable "adsb-location" under System Settings -> Privacy &\n'
-        'Security -> Location Services (the entry exists once the request fires)'
-    )
     try:
         result = subprocess.run(
             [str(helper), str(args.timeout)],
