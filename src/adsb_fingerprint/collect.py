@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from math import (
     asin,
@@ -53,6 +54,57 @@ IDENT_ALLOWANCE = 1      # cap-exempt ident (TC 1-4, callsign) messages per airc
 STATION_MIN_AIRCRAFT = 3     # fewest contributing aircraft worth a median
 STATION_FREEZE_AIRCRAFT = 20 # stop refining the estimate at this many
 STATION_AGREE_KM = 100.0     # config receiver within this of the estimate is trusted
+
+CONTROL_POLL_S = 2           # seconds between control-row heartbeats / gain-request polls
+
+# The web UI's gain knob: the collector advertises itself here (heartbeat,
+# mode, applied gain, the tuner's supported steps) and, in listen mode
+# only, applies whatever request the web app last wrote.
+CONTROL_UPSERT_SQL = """
+    insert into collector_control (
+        id,
+        heartbeat_at,
+        listen_mode,
+        applied_gain,
+        applied_at,
+        valid_gains_db
+    )
+    values (
+        true,
+        now(),
+        %(listen_mode)s,
+        %(applied_gain)s,
+        now(),
+        %(valid_gains_db)s
+    )
+    on conflict (id) do update set
+        heartbeat_at = excluded.heartbeat_at,
+        listen_mode = excluded.listen_mode,
+        applied_gain = excluded.applied_gain,
+        applied_at = excluded.applied_at,
+        valid_gains_db = excluded.valid_gains_db
+"""
+
+CONTROL_HEARTBEAT_SQL = """
+    update collector_control
+    set heartbeat_at = now()
+    where id
+"""
+
+CONTROL_REQUEST_SQL = """
+    select
+        requested_gain,
+        requested_at
+    from collector_control
+    where id
+"""
+
+CONTROL_APPLIED_SQL = """
+    update collector_control
+    set applied_gain = %(applied_gain)s,
+        applied_at = now()
+    where id
+"""
 
 COPY_SQL = """
     copy messages (
@@ -288,6 +340,7 @@ def collect(
     ppm,
     max_per_aircraft,
     window_seconds,
+    no_logging=False,
 ):
     from rtlsdr import RtlSdr
 
@@ -331,7 +384,8 @@ def collect(
     started = datetime.now(timezone.utc)
     session = session or started.strftime("%Y%m%dT%H%M%SZ")
     session_dir = config.CAPTURE_DIR / session
-    session_dir.mkdir(parents=True, exist_ok=True)
+    if not no_logging:
+        session_dir.mkdir(parents=True, exist_ok=True)
     snippet_path = session_dir / "snippets.cf32"
     snippet_rel = str(snippet_path.relative_to(config.CAPTURE_DIR))
     meta_path = session_dir / "session.yaml"      # not .json — adsb-index globs captures/**/*.json
@@ -339,6 +393,8 @@ def collect(
     is_tty = sys.stdout.isatty()
 
     def write_meta(outcome=None):
+        if no_logging:
+            return
         meta = {
             "session": session,
             "tool": "adsb-collect",
@@ -385,8 +441,12 @@ def collect(
         f"gain={'auto' if applied_gain is None else applied_gain}, "
         f"tuner={tuner} · reader+processor · {cap}"
     )
-    print(f"  snippets -> {snippet_path}")
-    print(f"  meta     -> {meta_path}")
+    if no_logging:
+        print("  not logging — live listen only: no snippets, no messages index, no session dir")
+        print("  gain is web-tunable from the map page while this runs")
+    else:
+        print(f"  snippets -> {snippet_path}")
+        print(f"  meta     -> {meta_path}")
     write_meta()
 
     device.read_samples(1024)                     # discard first read (PLL settle)
@@ -446,9 +506,24 @@ def collect(
             dirty.clear()
         conn.commit()
 
-    with open(snippet_path, "wb") as store, db.connect() as conn:
-        conn.execute("delete from messages where capture_file = %(f)s", {"f": snippet_rel})
+    store_ctx = nullcontext() if no_logging else open(snippet_path, "wb")
+    with store_ctx as store, db.connect() as conn:
+        if not no_logging:
+            conn.execute("delete from messages where capture_file = %(f)s", {"f": snippet_rel})
+        conn.execute(
+            CONTROL_UPSERT_SQL,
+            {
+                "listen_mode": no_logging,
+                "applied_gain": "auto" if applied_gain is None else f"{applied_gain:g}",
+                "valid_gains_db": [g / 10 for g in device.get_gains()],
+            },
+        )
         conn.commit()
+        last_control = start
+        # Consume any request already sitting in the row: only gain changes
+        # made while this run is live should apply.
+        stale = conn.execute(CONTROL_REQUEST_SQL).fetchone()
+        last_request_at = stale["requested_at"] if stale else None
         reader.start()
         try:
             while not (seconds and time.perf_counter() - start >= seconds):
@@ -486,6 +561,8 @@ def collect(
                         sys.stdout.write(".")
                         sys.stdout.flush()
 
+                    if no_logging:
+                        continue
                     if max_per_aircraft > 0:
                         bucket = int(abs_off / sample_rate_hz / window_seconds)
                         if bucket != current_bucket:
@@ -529,6 +606,29 @@ def collect(
                 carry = buf[-CARRY:]
                 abs_base += len(buf) - len(carry)
                 now = time.perf_counter()
+                if now - last_control >= CONTROL_POLL_S:
+                    last_control = now
+                    conn.execute(CONTROL_HEARTBEAT_SQL)
+                    if no_logging:
+                        req = conn.execute(CONTROL_REQUEST_SQL).fetchone()
+                        if (
+                            req
+                            and req["requested_gain"]
+                            and req["requested_at"] != last_request_at
+                        ):
+                            last_request_at = req["requested_at"]
+                            try:
+                                applied = _apply_gain(device, req["requested_gain"])
+                            except (ValueError, OSError) as err:
+                                print(f"\n  gain request {req['requested_gain']!r} rejected: {err}")
+                            else:
+                                label = "auto" if applied is None else f"{applied:g}"
+                                conn.execute(
+                                    CONTROL_APPLIED_SQL,
+                                    {"applied_gain": label},
+                                )
+                                print(f"\n  gain -> {label} (web request)")
+                    conn.commit()
                 if now - last_flush >= FLUSH_S:
                     flush(store, conn)
                     last_flush = now
@@ -635,6 +735,14 @@ def main():
         default=config.COLLECT_WINDOW_SECONDS,
         help="Cap window length in seconds (default: config.yaml).",
     )
+    parser.add_argument(
+        "--no-logging",
+        action="store_true",
+        help=(
+            "Live listen: feed the map and live_state but write no snippets, "
+            "no messages, and no session dir; gain becomes web-tunable."
+        ),
+    )
     args = parser.parse_args()
 
     collect(
@@ -647,6 +755,7 @@ def main():
         ppm=args.ppm,
         max_per_aircraft=args.max_per_aircraft,
         window_seconds=args.window_seconds,
+        no_logging=args.no_logging,
     )
 
 
