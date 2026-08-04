@@ -65,6 +65,40 @@ def station_position():
     return _station_cache["position"]
 
 
+# The collector's control row: heartbeat + mode + applied gain outbound,
+# gain requests inbound. Requests are honored only by --no-logging runs.
+CONTROL_STATE_SQL = """
+    select
+        extract(epoch from now() - heartbeat_at) as heartbeat_age_s,
+        listen_mode,
+        applied_gain,
+        valid_gains_db,
+        requested_gain
+    from collector_control
+    where id
+"""
+
+CONTROL_REQUEST_SQL = """
+    insert into collector_control (
+        id,
+        heartbeat_at,
+        listen_mode,
+        requested_gain,
+        requested_at
+    )
+    values (
+        true,
+        to_timestamp(0),
+        false,
+        %(gain)s,
+        now()
+    )
+    on conflict (id) do update set
+        requested_gain = excluded.requested_gain,
+        requested_at = excluded.requested_at
+"""
+
+
 # One row per aircraft heard in the window. Position, velocity, and ident ride
 # in different message types, so the newest row rarely has everything — each
 # field is independently "latest non-null". Distance/bearing from the receiver
@@ -771,6 +805,46 @@ def glyph_for(faa_type, icao_class, manufacturer):
     if manufacturer and "helicopter" in manufacturer.lower():
         return "heli"
     return "plane"
+
+
+def _valid_gain(text):
+    if text == "auto":
+        return True
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return False
+    return 0.0 <= value <= 60.0
+
+
+@app.route("/api/gain", methods=["GET", "POST"])
+def api_gain():
+    # The listen-mode gain knob. POST records a request; the collector
+    # applies it only when running --no-logging (a logging session's gain
+    # is provenance, fixed for the session). GET reports the control row
+    # so the UI can show itself only when a listen-mode collector is alive.
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        gain = payload.get("gain")
+        if isinstance(gain, (int, float)) and not isinstance(gain, bool):
+            gain = f"{float(gain):g}"
+        if not isinstance(gain, str) or not _valid_gain(gain):
+            return {"error": 'gain must be "auto" or 0-60 dB'}, 400
+        with db.connect() as conn:
+            conn.execute(CONTROL_REQUEST_SQL, {"gain": gain})
+            conn.commit()
+    with db.connect() as conn:
+        row = conn.execute(CONTROL_STATE_SQL).fetchone()
+    if row is None:
+        return {"alive": False}
+    return {
+        "alive": float(row["heartbeat_age_s"]) < 10.0,
+        "heartbeat_age_s": round(float(row["heartbeat_age_s"]), 1),
+        "listen_mode": row["listen_mode"],
+        "applied_gain": row["applied_gain"],
+        "valid_gains_db": row["valid_gains_db"],
+        "requested_gain": row["requested_gain"],
+    }
 
 
 @app.route("/api/aircraft")

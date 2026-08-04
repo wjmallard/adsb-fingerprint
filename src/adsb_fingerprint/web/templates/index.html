@@ -11,6 +11,11 @@
 <body>
     <div id="map">
         <div id="status-chip" class="chip">connecting…</div>
+        <div id="gain-chip" class="chip" hidden>
+            listen · gain
+            <select id="gain-select"></select>
+            <span id="gain-pending"></span>
+        </div>
     </div>
     <div id="panels">
         <section id="roster">
@@ -51,5 +56,64 @@
         };
     </script>
     <script src="/static/js/app.js"></script>
+    <script>
+        // Listen-mode gain knob: visible only while a --no-logging collector
+        // heartbeats. Options come from the tuner's real supported steps.
+        (function () {
+            const chip = document.getElementById("gain-chip");
+            const select = document.getElementById("gain-select");
+            const pending = document.getElementById("gain-pending");
+            let optionsReady = false;
+            let waiting = false;
+
+            async function poll() {
+                let state;
+                try {
+                    state = await (await fetch("/api/gain")).json();
+                } catch (err) {
+                    chip.hidden = true;
+                    return;
+                }
+                if (!state.alive || !state.listen_mode) {
+                    chip.hidden = true;
+                    return;
+                }
+                if (!optionsReady && state.valid_gains_db) {
+                    for (const label of ["auto", ...state.valid_gains_db.map(String)]) {
+                        const option = document.createElement("option");
+                        option.value = label;
+                        option.textContent = label;
+                        select.appendChild(option);
+                    }
+                    optionsReady = true;
+                    select.value = state.applied_gain || "auto";
+                }
+                chip.hidden = !optionsReady;
+                if (waiting && state.applied_gain === state.requested_gain) {
+                    waiting = false;
+                }
+                if (!waiting && state.applied_gain) {
+                    select.value = state.applied_gain;
+                }
+                pending.textContent = waiting ? "…" : "";
+            }
+
+            select.addEventListener("change", async () => {
+                waiting = true;
+                pending.textContent = "…";
+                await fetch("/api/gain", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        gain: select.value === "auto" ? "auto" : Number(select.value),
+                    }),
+                });
+                poll();
+            });
+
+            setInterval(poll, 2000);
+            poll();
+        })();
+    </script>
 </body>
 </html>

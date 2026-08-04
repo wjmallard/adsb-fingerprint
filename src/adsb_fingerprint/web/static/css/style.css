@@ -35,6 +35,19 @@ body {
     color: #f0c8c8;
 }
 
+/* listen-mode gain knob, stacked under the status chip */
+#gain-chip {
+    top: 42px;
+}
+
+#gain-chip select {
+    background: transparent;
+    color: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    font-size: 12px;
+}
+
 #panels {
     display: grid;
     grid-template-columns: 3fr 2fr;
