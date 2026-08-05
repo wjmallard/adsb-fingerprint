@@ -10,6 +10,10 @@ Display: a full-screen curses dashboard on a terminal (state, satellite
 roster, recent events); --plain (or a terminal curses can't drive) falls
 back to a one-line self-rewriting status; redirected output gets plain
 periodic heartbeat prints.
+
+Each connect first seeds the puck with host time and a rough Location
+Services position (UBX aiding, see seed_gps; --no-seed skips) — mainly
+a faster relock after travel, and a no-op once the puck is navigating.
 """
 
 import argparse
@@ -26,7 +30,8 @@ from glob import glob
 
 import serial
 
-from adsb_fingerprint import config
+from adsb_fingerprint import config, location
+from adsb_fingerprint.seed_gps import seed
 
 FIELDS = [
     "host_utc",
@@ -629,6 +634,11 @@ def main():
         help="Watch the receiver without writing track files.",
     )
     parser.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="Skip seeding the puck with time + position aiding at connect.",
+    )
+    parser.add_argument(
         "--plain",
         action="store_true",
         help="One-line status instead of the full-screen dashboard.",
@@ -707,6 +717,13 @@ def main():
             try:
                 with serial.Serial(port, 9600, timeout=2) as ser:
                     emit(f"logging {port}")
+                    if not args.no_seed:
+                        # Draw first: the Location Services query below can
+                        # hold the screen for a few seconds.
+                        if dash and dash.draw(gps, port, time.monotonic()) == "quit":
+                            raise KeyboardInterrupt
+                        summary, _ = seed(ser, location.current_location())
+                        emit(summary)
                     gps.last_sentence = time.monotonic()
                     while not expired():
                         now = time.monotonic()

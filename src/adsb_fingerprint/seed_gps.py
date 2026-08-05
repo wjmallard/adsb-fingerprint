@@ -9,10 +9,11 @@ the search starts on the sky actually overhead. It does not shortcut
 the per-satellite ephemeris decode, so the payoff is a warm start, not
 a hot one; without a Location Services fix it still seeds time alone.
 
-The logger owns the serial port while it runs (serial opens are
-exclusive), so the order is: plug in, seed, then start adsb-log-gps.
-A puck that answers nothing is in the known dead-boot mode — replug
-and rerun.
+adsb-log-gps runs the same seeding at every connect (--no-seed skips),
+so the standalone command is for aiding without starting the logger —
+and doubles as a liveness probe: a puck that answers nothing is in the
+known dead-boot mode (replug). It cannot run while the logger holds the
+port; serial opens are exclusive.
 """
 
 import argparse
@@ -20,17 +21,22 @@ import struct
 import sys
 import time
 from datetime import datetime, timezone
+from glob import glob
 
 import serial
 
 from adsb_fingerprint import config, location
-from adsb_fingerprint.log_gps import (
-    GREEN,
-    RED,
-    RESET,
-    YELLOW,
-    resolve_port,
-)
+
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+RESET = "\033[0m"
+
+TONE_COLORS = {
+    "good": GREEN,
+    "warn": YELLOW,
+    "bad": RED,
+}
 
 UBX_SYNC = b"\xb5\x62"
 CLS_ACK = 0x05
@@ -67,6 +73,11 @@ REJECT_REASONS = {
 
 def paint(text, color):
     return f"{color}{text}{RESET}" if sys.stdout.isatty() else text
+
+
+def resolve_port(pattern):
+    matches = sorted(glob(pattern))
+    return matches[0] if matches else None
 
 
 def fletcher(data):
@@ -189,18 +200,66 @@ def await_mga_ack(ser, ini_type):
     return None, "no acknowledgment"
 
 
-def report(ser, acks, name, detail, ini_type):
-    """Print one seed line with its verdict; False only on a hard reject."""
+def outcome(ser, acks, ini_type):
+    """(verdict, tone) for one aiding message just sent."""
     if not acks:
-        print(f"{name:<10}{detail} — " + paint("sent (unconfirmed)", YELLOW))
-        return True
+        return "sent (unconfirmed)", "warn"
     accepted, reason = await_mga_ack(ser, ini_type)
     if accepted:
-        print(f"{name:<10}{detail} — " + paint("accepted", GREEN))
-        return True
-    verdict = "no acknowledgment" if accepted is None else f"rejected: {reason}"
-    print(f"{name:<10}{detail} — " + paint(verdict, RED))
-    return False
+        return "accepted", "good"
+    if accepted is None:
+        return "no acknowledgment", "bad"
+    return f"rejected: {reason}", "bad"
+
+
+def summarize(items):
+    for name, _, verdict, tone in items:
+        if tone == "bad":
+            if verdict == "no acknowledgment":
+                return f"seed: {name} unacknowledged"
+            return f"seed: {name} {verdict}"
+    verdicts = [verdict for _, _, verdict, _ in items]
+    if "sent (unconfirmed)" in verdicts:
+        return "seeded (unconfirmed)"
+    if "seeded time only" in verdicts:
+        return "seeded time only (no Location Services fix)"
+    return "seeded time + position"
+
+
+def seed(ser, place):
+    """Push aiding over an already-open port; (summary, items).
+
+    summary is a one-line outcome for event logs; items are
+    (name, detail, verdict, tone) rows for line-by-line display. Only
+    serial errors raise — a silent or refusing puck just reports as
+    such.
+    """
+    send(ser, cfg_navx5_ack_aiding())
+    acks = await_cfg_ack(ser)
+    if acks is None:
+        # One retry: a flaky USB moment can eat the first exchange even
+        # while NMEA keeps flowing (seen live 2026-08-05).
+        send(ser, cfg_navx5_ack_aiding())
+        acks = await_cfg_ack(ser)
+    if acks is None:
+        return (
+            "seed: no UBX reply — dead boot? replug",
+            [("puck", "no UBX reply", "dead boot? replug and rerun", "bad")],
+        )
+    items = []
+    now = datetime.now(timezone.utc)
+    send(ser, mga_ini_time_utc(now))
+    detail = f"{now.strftime('%Y-%m-%dT%H:%M:%SZ')} ±{TIME_ACCURACY_S} s"
+    items.append(("time", detail, *outcome(ser, acks, TYPE_INI_TIME_UTC)))
+    if place is None:
+        items.append(("position", "no Location Services fix", "seeded time only", "warn"))
+    else:
+        latitude, longitude, accuracy = place
+        send(ser, mga_ini_pos_llh(latitude, longitude, accuracy))
+        claimed_km = max(accuracy, POSITION_ACCURACY_FLOOR_M) / 1000
+        detail = f"{latitude:.5f}, {longitude:.5f} ±{claimed_km:.0f} km"
+        items.append(("position", detail, *outcome(ser, acks, TYPE_INI_POS_LLH)))
+    return summarize(items), items
 
 
 def main():
@@ -225,39 +284,18 @@ def main():
         ser = serial.Serial(port, 9600, timeout=0.2)
     except (serial.SerialException, OSError) as err:
         hint = (
-            " — is adsb-log-gps holding the port? seed first, then log"
+            " — adsb-log-gps holds the port and already seeds at connect"
             if "busy" in str(err).lower()
             else ""
         )
         raise SystemExit(f"cannot open {port}: {err}{hint}")
 
     print(f"{'port':<10}{port}")
-    failed = False
     with ser:
-        send(ser, cfg_navx5_ack_aiding())
-        acks = await_cfg_ack(ser)
-        if acks is None:
-            raise SystemExit(
-                paint("no UBX reply from the puck — dead boot? replug and rerun", RED)
-            )
-
-        now = datetime.now(timezone.utc)
-        send(ser, mga_ini_time_utc(now))
-        detail = f"{now.strftime('%Y-%m-%dT%H:%M:%SZ')} ±{TIME_ACCURACY_S} s"
-        failed |= not report(ser, acks, "time", detail, TYPE_INI_TIME_UTC)
-
-        if place is None:
-            print(
-                f"{'position':<10}"
-                + paint("no Location Services fix — seeded time only", YELLOW)
-            )
-        else:
-            latitude, longitude, accuracy = place
-            send(ser, mga_ini_pos_llh(latitude, longitude, accuracy))
-            claimed_km = max(accuracy, POSITION_ACCURACY_FLOOR_M) / 1000
-            detail = f"{latitude:.5f}, {longitude:.5f} ±{claimed_km:.0f} km"
-            failed |= not report(ser, acks, "position", detail, TYPE_INI_POS_LLH)
-    if failed:
+        _, items = seed(ser, place)
+    for name, detail, verdict, tone in items:
+        print(f"{name:<10}{detail} — " + paint(verdict, TONE_COLORS[tone]))
+    if any(tone == "bad" for _, _, _, tone in items):
         raise SystemExit(1)
 
 
