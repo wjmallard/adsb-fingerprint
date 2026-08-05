@@ -15,6 +15,7 @@ gps
   adsb-log-location    log Location Services fixes to daily track files
   adsb-geotag          back-fill receiver positions from GPS track logs
   adsb-auth-location   authorize + test macOS Location Services for the station
+  adsb-seed-gps        seed the puck with time + position for a faster first fix
 
 database
   adsb-initdb          apply sql/ to the configured Postgres database
